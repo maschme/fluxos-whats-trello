@@ -1,25 +1,32 @@
 const { Configuracao } = require('../Models/ConfiguracaoModel');
+const { getEmpresaId } = require('../context/tenantContext');
 
-// Cache em memória para performance
-let cacheConfig = {};
-let cacheTimestamp = null;
-const CACHE_TTL = 60000; // 1 minuto
+const CACHE_TTL = 60000;
+const cacheByEmpresa = new Map();
+
+function getBucket() {
+  const eid = getEmpresaId();
+  if (!cacheByEmpresa.has(eid)) {
+    cacheByEmpresa.set(eid, { cacheConfig: {}, cacheTimestamp: null });
+  }
+  return cacheByEmpresa.get(eid);
+}
 
 async function carregarConfiguracoes() {
   const agora = Date.now();
-  
-  // Retorna cache se ainda válido
-  if (cacheTimestamp && (agora - cacheTimestamp) < CACHE_TTL) {
-    return cacheConfig;
+  const bucket = getBucket();
+
+  if (bucket.cacheTimestamp && (agora - bucket.cacheTimestamp) < CACHE_TTL) {
+    return bucket.cacheConfig;
   }
 
-  const configs = await Configuracao.findAll();
-  cacheConfig = {};
+  const eid = getEmpresaId();
+  const configs = await Configuracao.findAll({ where: { empresaId: eid } });
+  bucket.cacheConfig = {};
 
   for (const config of configs) {
     let valor = config.valor;
 
-    // Converte para o tipo correto
     switch (config.tipo) {
       case 'boolean':
         valor = valor === 'true';
@@ -36,7 +43,7 @@ async function carregarConfiguracoes() {
         break;
     }
 
-    cacheConfig[config.chave] = {
+    bucket.cacheConfig[config.chave] = {
       valor,
       tipo: config.tipo,
       categoria: config.categoria,
@@ -44,9 +51,9 @@ async function carregarConfiguracoes() {
     };
   }
 
-  cacheTimestamp = agora;
-  console.log('📦 Configurações carregadas do banco');
-  return cacheConfig;
+  bucket.cacheTimestamp = agora;
+  console.log(`📦 Configurações carregadas do banco (empresa ${eid})`);
+  return bucket.cacheConfig;
 }
 
 async function getConfiguracao(chave) {
@@ -68,13 +75,13 @@ async function getConfiguracoesPorCategoria(categoria) {
 }
 
 async function setConfiguracao(chave, valor) {
-  const config = await Configuracao.findOne({ where: { chave } });
+  const eid = getEmpresaId();
+  const config = await Configuracao.findOne({ where: { chave, empresaId: eid } });
 
   if (!config) {
     throw new Error(`Configuração "${chave}" não encontrada`);
   }
 
-  // Converte valor para string para salvar
   let valorString;
   if (config.tipo === 'json') {
     valorString = JSON.stringify(valor);
@@ -84,14 +91,15 @@ async function setConfiguracao(chave, valor) {
 
   await config.update({ valor: valorString });
 
-  // Invalida cache
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
 
   console.log(`⚙️ Configuração "${chave}" atualizada para: ${valorString}`);
-  return await getConfiguracao(chave);
+  return getConfiguracao(chave);
 }
 
 async function criarConfiguracao(dados) {
+  const eid = getEmpresaId();
   const { chave, valor, tipo = 'string', categoria = 'geral', descricao = '' } = dados;
 
   let valorString;
@@ -102,6 +110,7 @@ async function criarConfiguracao(dados) {
   }
 
   const config = await Configuracao.create({
+    empresaId: eid,
     chave,
     valor: valorString,
     tipo,
@@ -109,27 +118,29 @@ async function criarConfiguracao(dados) {
     descricao
   });
 
-  // Invalida cache
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
 
   return config;
 }
 
 async function listarConfiguracoes() {
-  return await carregarConfiguracoes();
+  return carregarConfiguracoes();
 }
 
 async function listarCategorias() {
+  const eid = getEmpresaId();
   const configs = await Configuracao.findAll({
+    where: { empresaId: eid },
     attributes: ['categoria'],
     group: ['categoria']
   });
-  return configs.map(c => c.categoria);
+  return configs.map((c) => c.categoria);
 }
 
-// Invalida o cache manualmente
 function invalidarCache() {
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
 }
 
 module.exports = {

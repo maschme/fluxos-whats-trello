@@ -18,7 +18,7 @@ if (!fs.existsSync(path.join(root, '.env'))) {
   process.exit(1);
 }
 
-const pm2Name = process.env.PM2_APP_NAME || 'pizzaria-bot';
+const pm2Name = process.env.PM2_APP_NAME || 'cs-canivete-suico';
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { stdio: 'inherit', cwd: root, shell: true, ...opts });

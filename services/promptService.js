@@ -1,94 +1,110 @@
 const { Prompt } = require('../Models/PromptModel');
+const { getEmpresaId } = require('../context/tenantContext');
 
-// Cache em memória
-let cachePrompts = {};
-let cacheTimestamp = null;
-const CACHE_TTL = 60000; // 1 minuto
+const CACHE_TTL = 60000;
+const cacheByEmpresa = new Map();
+
+function getBucket() {
+  const eid = getEmpresaId();
+  if (!cacheByEmpresa.has(eid)) {
+    cacheByEmpresa.set(eid, { cachePrompts: {}, cacheTimestamp: null });
+  }
+  return cacheByEmpresa.get(eid);
+}
 
 async function carregarPrompts() {
-  const prompts = await Prompt.findAll({ where: { ativo: true } });
-  cachePrompts = {};
-  prompts.forEach(p => {
-    cachePrompts[p.nome] = p;
+  const eid = getEmpresaId();
+  const prompts = await Prompt.findAll({ where: { ativo: true, empresaId: eid } });
+  const bucket = getBucket();
+  bucket.cachePrompts = {};
+  prompts.forEach((p) => {
+    bucket.cachePrompts[p.nome] = p;
   });
-  cacheTimestamp = Date.now();
-  console.log(`📝 ${prompts.length} prompts carregados do banco`);
-  return cachePrompts;
+  bucket.cacheTimestamp = Date.now();
+  console.log(`📝 ${prompts.length} prompts carregados (empresa ${eid})`);
+  return bucket.cachePrompts;
 }
 
 async function getPrompt(nome, variaveis = {}) {
   const agora = Date.now();
-  
-  if (!cacheTimestamp || (agora - cacheTimestamp) > CACHE_TTL) {
+  const bucket = getBucket();
+
+  if (!bucket.cacheTimestamp || (agora - bucket.cacheTimestamp) > CACHE_TTL) {
     await carregarPrompts();
   }
-  
-  const prompt = cachePrompts[nome];
+
+  const prompt = bucket.cachePrompts[nome];
   if (!prompt) {
     console.warn(`⚠️ Prompt "${nome}" não encontrado`);
     return null;
   }
-  
-  // Substitui variáveis no conteúdo
+
   let conteudo = prompt.conteudo;
   for (const [key, value] of Object.entries(variaveis)) {
     const regex = new RegExp(`{{${key}}}`, 'g');
     conteudo = conteudo.replace(regex, value);
   }
-  
+
   return conteudo;
 }
 
 async function listarPrompts(filtros = {}) {
-  const where = {};
-  
+  const eid = getEmpresaId();
+  const where = { empresaId: eid };
+
   if (filtros.tipo) where.tipo = filtros.tipo;
   if (filtros.ativo !== undefined) where.ativo = filtros.ativo;
-  
-  return await Prompt.findAll({ 
+
+  return Prompt.findAll({
     where,
     order: [['tipo', 'ASC'], ['nome', 'ASC']]
   });
 }
 
 async function getPromptPorId(id) {
-  return await Prompt.findByPk(id);
+  const eid = getEmpresaId();
+  return Prompt.findOne({ where: { id, empresaId: eid } });
 }
 
 async function criarPrompt(dados) {
-  const prompt = await Prompt.create(dados);
-  cacheTimestamp = null; // Invalida cache
+  const eid = getEmpresaId();
+  const prompt = await Prompt.create({ ...dados, empresaId: eid });
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return prompt;
 }
 
 async function atualizarPrompt(id, dados) {
-  const prompt = await Prompt.findByPk(id);
+  const prompt = await getPromptPorId(id);
   if (!prompt) throw new Error('Prompt não encontrado');
-  
-  // Incrementa versão se o conteúdo mudou
+
   if (dados.conteudo && dados.conteudo !== prompt.conteudo) {
     dados.versao = prompt.versao + 1;
   }
-  
+
   await prompt.update(dados);
-  cacheTimestamp = null; // Invalida cache
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return prompt;
 }
 
 async function deletarPrompt(id) {
-  const prompt = await Prompt.findByPk(id);
+  const prompt = await getPromptPorId(id);
   if (!prompt) throw new Error('Prompt não encontrado');
-  
+
   await prompt.destroy();
-  cacheTimestamp = null; // Invalida cache
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return true;
 }
 
 async function duplicarPrompt(id, novoNome) {
-  const original = await Prompt.findByPk(id);
+  const original = await getPromptPorId(id);
   if (!original) throw new Error('Prompt não encontrado');
-  
-  const novo = await Prompt.create({
+
+  const eid = getEmpresaId();
+  return Prompt.create({
+    empresaId: eid,
     nome: novoNome,
     descricao: `Cópia de: ${original.descricao || original.nome}`,
     tipo: original.tipo,
@@ -97,13 +113,12 @@ async function duplicarPrompt(id, novoNome) {
     ativo: false,
     versao: 1
   });
-  
-  return novo;
 }
 
 function invalidarCache() {
-  cacheTimestamp = null;
-  cachePrompts = {};
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
+  bucket.cachePrompts = {};
 }
 
 module.exports = {

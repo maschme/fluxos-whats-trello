@@ -5,6 +5,11 @@
  * Uso: node teste-webhook.js [URL]
  * Ex.: node teste-webhook.js
  *      node teste-webhook.js http://localhost:3007/api/fluxos/1/webhook
+ *
+ * A API exige JWT. Gere um token (login no painel) e use:
+ *   set WEBHOOK_TEST_TOKEN=seu_jwt
+ * Opcional para multi-empresa no mesmo usuário super admin:
+ *   set WEBHOOK_TEST_EMPRESA_ID=1
  */
 
 const axios = require('axios');
@@ -23,7 +28,14 @@ const payload = {
   console.log('Body:', JSON.stringify(payload, null, 2));
   console.log('---');
   try {
-    const res = await axios.post(url, payload, { headers: { 'Content-Type': 'application/json' }, validateStatus: () => true });
+    const headers = { 'Content-Type': 'application/json' };
+    if (process.env.WEBHOOK_TEST_TOKEN) {
+      headers.Authorization = 'Bearer ' + process.env.WEBHOOK_TEST_TOKEN;
+    }
+    if (process.env.WEBHOOK_TEST_EMPRESA_ID) {
+      headers['X-Empresa-Id'] = String(process.env.WEBHOOK_TEST_EMPRESA_ID);
+    }
+    const res = await axios.post(url, payload, { headers, validateStatus: () => true });
     const data = res.data;
     console.log('Status HTTP:', res.status);
     console.log('Resposta:', JSON.stringify(data, null, 2));

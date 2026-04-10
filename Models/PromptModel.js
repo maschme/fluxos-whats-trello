@@ -7,10 +7,15 @@ const Prompt = sequelize.define('Prompt', {
     primaryKey: true,
     autoIncrement: true
   },
+  empresaId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    references: { model: 'empresas', key: 'id' }
+  },
   nome: {
     type: DataTypes.STRING(100),
-    allowNull: false,
-    unique: true
+    allowNull: false
   },
   descricao: {
     type: DataTypes.STRING(500),
@@ -45,7 +50,10 @@ const Prompt = sequelize.define('Prompt', {
   }
 }, {
   tableName: 'prompts',
-  timestamps: true
+  timestamps: true,
+  indexes: [
+    { unique: true, fields: ['empresaId', 'nome'], name: 'uniq_prompt_empresa_nome' }
+  ]
 });
 
 module.exports = { Prompt };

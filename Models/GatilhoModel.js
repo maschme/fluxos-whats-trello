@@ -7,10 +7,15 @@ const Gatilho = sequelize.define('Gatilho', {
     primaryKey: true,
     autoIncrement: true
   },
+  empresaId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    references: { model: 'empresas', key: 'id' }
+  },
   nome: {
     type: DataTypes.STRING(100),
-    allowNull: false,
-    unique: true
+    allowNull: false
   },
   tipo: {
     type: DataTypes.ENUM('campanha', 'atendimento', 'promocao', 'outro'),
@@ -55,7 +60,10 @@ const Gatilho = sequelize.define('Gatilho', {
   }
 }, {
   tableName: 'gatilhos',
-  timestamps: true
+  timestamps: true,
+  indexes: [
+    { unique: true, fields: ['empresaId', 'nome'], name: 'uniq_gatilho_empresa_nome' }
+  ]
 });
 
 module.exports = { Gatilho, sequelize };

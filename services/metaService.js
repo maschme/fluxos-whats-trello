@@ -2,6 +2,7 @@
 
 const mysql = require('mysql2/promise');
 const { dbConfig } = require('../database/connection');
+const { getEmpresaId } = require('../context/tenantContext');
 
 const mysql2Config = {
   host: dbConfig.host,
@@ -16,40 +17,62 @@ function normalizarWhatsappId(id) {
   return String(id).replace(/\D/g, '');
 }
 
-/**
- * Lista todas as metas ativas (para dropdown no fluxo, etc.)
- */
 async function listarMetas(apenasAtivas = true) {
+  const eid = getEmpresaId();
   const conn = await mysql.createConnection(mysql2Config);
   try {
-    const where = apenasAtivas ? 'WHERE ativo = 1' : '';
-    const [rows] = await conn.execute(`SELECT id, nome, descricao, ativo FROM metas ${where} ORDER BY nome`);
-    return rows;
+    try {
+      const where = apenasAtivas ? 'WHERE ativo = 1 AND empresa_id = ?' : 'WHERE empresa_id = ?';
+      const [rows] = await conn.execute(
+        `SELECT id, nome, descricao, ativo FROM metas ${where} ORDER BY nome`,
+        [eid]
+      );
+      return rows;
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        const where = apenasAtivas ? 'WHERE ativo = 1' : '';
+        const [rows] = await conn.execute(`SELECT id, nome, descricao, ativo FROM metas ${where} ORDER BY nome`);
+        return rows;
+      }
+      throw e;
+    }
   } finally {
     await conn.end();
   }
 }
 
-/**
- * Busca meta por nome ou id
- */
 async function getMetaPorNomeOuId(nomeOuId) {
+  const eid = getEmpresaId();
   const conn = await mysql.createConnection(mysql2Config);
   try {
     const isId = /^\d+$/.test(String(nomeOuId));
-    const [rows] = isId
-      ? await conn.execute('SELECT id, nome, descricao FROM metas WHERE id = ?', [parseInt(nomeOuId, 10)])
-      : await conn.execute('SELECT id, nome, descricao FROM metas WHERE nome = ?', [String(nomeOuId).trim()]);
-    return rows[0] || null;
+    try {
+      if (isId) {
+        const [rows] = await conn.execute(
+          'SELECT id, nome, descricao FROM metas WHERE id = ? AND empresa_id = ?',
+          [parseInt(nomeOuId, 10), eid]
+        );
+        return rows[0] || null;
+      }
+      const [rows] = await conn.execute(
+        'SELECT id, nome, descricao FROM metas WHERE nome = ? AND empresa_id = ?',
+        [String(nomeOuId).trim(), eid]
+      );
+      return rows[0] || null;
+    } catch (e) {
+      if (e.code === 'ER_BAD_FIELD_ERROR') {
+        const [rows] = isId
+          ? await conn.execute('SELECT id, nome, descricao FROM metas WHERE id = ?', [parseInt(nomeOuId, 10)])
+          : await conn.execute('SELECT id, nome, descricao FROM metas WHERE nome = ?', [String(nomeOuId).trim()]);
+        return rows[0] || null;
+      }
+      throw e;
+    }
   } finally {
     await conn.end();
   }
 }
 
-/**
- * Marca uma meta como concluída para o contato (whatsapp_id).
- * whatsapp_id pode vir com @c.us; é normalizado para só dígitos.
- */
 async function marcarConcluido(whatsappId, metaNomeOuId) {
   const meta = await getMetaPorNomeOuId(metaNomeOuId);
   if (!meta) return { ok: false, erro: 'Meta não encontrada' };
@@ -60,8 +83,9 @@ async function marcarConcluido(whatsappId, metaNomeOuId) {
   try {
     await conn.execute(
       `INSERT INTO contato_metas (whatsapp_id, meta_id, concluido) VALUES (?, ?, 1)
-       ON DUPLICATE KEY UPDATE concluido = 1, concluido_em = CURRENT_TIMESTAMP`
-    , [wid, meta.id]);
+       ON DUPLICATE KEY UPDATE concluido = 1, concluido_em = CURRENT_TIMESTAMP`,
+      [wid, meta.id]
+    );
     return { ok: true, meta: meta.nome };
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return { ok: false, erro: 'Tabelas metas/contato_metas não existem' };
@@ -71,10 +95,6 @@ async function marcarConcluido(whatsappId, metaNomeOuId) {
   }
 }
 
-/**
- * Verifica se o contato já concluiu a meta.
- * Retorna true/false.
- */
 async function verificarConcluido(whatsappId, metaNomeOuId) {
   const meta = await getMetaPorNomeOuId(metaNomeOuId);
   if (!meta) return false;
@@ -96,9 +116,6 @@ async function verificarConcluido(whatsappId, metaNomeOuId) {
   }
 }
 
-/**
- * Lista nomes das metas que o contato já concluiu (para pós-venda, etc.)
- */
 async function listarMetasConcluidasPorContato(whatsappId) {
   const wid = normalizarWhatsappId(whatsappId);
   if (!wid) return [];

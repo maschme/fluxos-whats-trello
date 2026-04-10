@@ -3,11 +3,13 @@
 /**
  * Executor de automações (fluxos tipo=automacao).
  * Roda grafo de nós sem contexto de chat; contexto = { variables, triggerPayload }.
- * Nós: trigger_webhook, trigger_schedule, condition, set_variable, http_request, ia, merge, log, end, sleep.
+ * Nós: trigger_webhook, trigger_schedule, trigger_trello, condition, set_variable, http_request, ia, merge, log, end, sleep,
+ * trello_create_card, trello_move_card, trello_comment, trello_add_label.
  */
 
 const axios = require('axios');
 const provedorService = require('./provedorIAService');
+const integracaoTrelloService = require('./integracaoTrelloService');
 
 function interpolate(str, vars) {
   if (typeof str !== 'string') return str;
@@ -40,11 +42,21 @@ function getNextNodeId(edges, sourceId, sourceHandle = 'output') {
 async function executarAutomacao(fluxo, triggerType = 'manual', triggerPayload = {}) {
   const nodes = fluxo.nodes || [];
   const edges = fluxo.edges || [];
+  const empresaId = fluxo.empresaId != null ? Number(fluxo.empresaId) : null;
   const variables = {
     triggerType,
     triggerPayload: triggerPayload || {},
     ...(triggerPayload && typeof triggerPayload === 'object' ? triggerPayload : {})
   };
+  if (triggerType === 'trello' && triggerPayload && triggerPayload.action) {
+    const a = triggerPayload.action;
+    const d = a.data || {};
+    if (d.card && d.card.id) variables.trelloCardId = d.card.id;
+    if (d.listAfter && d.listAfter.id) variables.trelloListIdAfter = d.listAfter.id;
+    if (d.listBefore && d.listBefore.id) variables.trelloListIdBefore = d.listBefore.id;
+    if (d.board && d.board.id) variables.trelloBoardId = d.board.id;
+    if (a.type) variables.trelloActionType = a.type;
+  }
   const logs = [];
 
   // Encontrar nó de início pelo tipo do trigger
@@ -52,6 +64,9 @@ async function executarAutomacao(fluxo, triggerType = 'manual', triggerPayload =
   if (triggerType === 'webhook') {
     const webhookNode = nodes.find(n => n.type === 'trigger_webhook');
     currentNodeId = webhookNode ? webhookNode.id : null;
+  } else if (triggerType === 'trello') {
+    const trelloNode = nodes.find(n => n.type === 'trigger_trello');
+    currentNodeId = trelloNode ? trelloNode.id : null;
   } else if (triggerType === 'schedule' || triggerType === 'manual') {
     const scheduleNode = nodes.find(n => n.type === 'trigger_schedule');
     currentNodeId = scheduleNode ? scheduleNode.id : null;
@@ -77,6 +92,7 @@ async function executarAutomacao(fluxo, triggerType = 'manual', triggerPayload =
       switch (node.type) {
         case 'trigger_webhook':
         case 'trigger_schedule':
+        case 'trigger_trello':
           if (data.variavelPayload && triggerPayload) {
             variables[data.variavelPayload] = triggerPayload;
           }
@@ -183,6 +199,97 @@ async function executarAutomacao(fluxo, triggerType = 'manual', triggerPayload =
         case 'sleep': {
           const ms = Math.min(600000, parseInt(data.delayMs || data.segundos || 0, 10) * 1000 || 0);
           if (ms > 0) await new Promise(r => setTimeout(r, ms));
+          nextId = getNextNodeId(edges, node.id, 'output');
+          break;
+        }
+
+        case 'trello_create_card': {
+          if (empresaId == null || Number.isNaN(empresaId)) {
+            if (data.onError === 'stop') {
+              return { success: false, variables, logs, error: 'Automação sem empresaId' };
+            }
+          } else {
+            try {
+              const listId = interpolate(data.listId || '', variables);
+              const name = interpolate(data.nome || data.name || '', variables);
+              const desc = interpolate(data.descricao || data.desc || '', variables);
+              const card = await integracaoTrelloService.criarCard(empresaId, { listId, name, desc });
+              const outVar = data.variavelSaida || 'trelloCard';
+              variables[outVar] = card;
+              if (card && card.id) variables.trelloCardId = card.id;
+            } catch (err) {
+              variables[data.variavelSaida || 'trelloCard'] = { error: err.message };
+              if (data.onError === 'stop') {
+                return { success: false, variables, logs, error: `Trello: ${err.message}` };
+              }
+            }
+          }
+          nextId = getNextNodeId(edges, node.id, 'output');
+          break;
+        }
+
+        case 'trello_move_card': {
+          if (empresaId == null || Number.isNaN(empresaId)) {
+            if (data.onError === 'stop') {
+              return { success: false, variables, logs, error: 'Automação sem empresaId' };
+            }
+          } else {
+            try {
+              const cardId = interpolate(data.cardId || '', variables);
+              const listId = interpolate(data.listId || '', variables);
+              const moved = await integracaoTrelloService.moverCard(empresaId, { cardId, listId });
+              variables[data.variavelSaida || 'trelloMove'] = moved;
+            } catch (err) {
+              variables[data.variavelSaida || 'trelloMove'] = { error: err.message };
+              if (data.onError === 'stop') {
+                return { success: false, variables, logs, error: `Trello: ${err.message}` };
+              }
+            }
+          }
+          nextId = getNextNodeId(edges, node.id, 'output');
+          break;
+        }
+
+        case 'trello_comment': {
+          if (empresaId == null || Number.isNaN(empresaId)) {
+            if (data.onError === 'stop') {
+              return { success: false, variables, logs, error: 'Automação sem empresaId' };
+            }
+          } else {
+            try {
+              const cardId = interpolate(data.cardId || '', variables);
+              const text = interpolate(data.texto || data.text || '', variables);
+              const r = await integracaoTrelloService.comentarCard(empresaId, { cardId, text });
+              variables[data.variavelSaida || 'trelloComment'] = r;
+            } catch (err) {
+              variables[data.variavelSaida || 'trelloComment'] = { error: err.message };
+              if (data.onError === 'stop') {
+                return { success: false, variables, logs, error: `Trello: ${err.message}` };
+              }
+            }
+          }
+          nextId = getNextNodeId(edges, node.id, 'output');
+          break;
+        }
+
+        case 'trello_add_label': {
+          if (empresaId == null || Number.isNaN(empresaId)) {
+            if (data.onError === 'stop') {
+              return { success: false, variables, logs, error: 'Automação sem empresaId' };
+            }
+          } else {
+            try {
+              const cardId = interpolate(data.cardId || '', variables);
+              const labelId = interpolate(data.labelId || '', variables);
+              const r = await integracaoTrelloService.adicionarLabel(empresaId, { cardId, labelId });
+              variables[data.variavelSaida || 'trelloLabel'] = r;
+            } catch (err) {
+              variables[data.variavelSaida || 'trelloLabel'] = { error: err.message };
+              if (data.onError === 'stop') {
+                return { success: false, variables, logs, error: `Trello: ${err.message}` };
+              }
+            }
+          }
           nextId = getNextNodeId(edges, node.id, 'output');
           break;
         }

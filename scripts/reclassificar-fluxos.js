@@ -13,7 +13,8 @@ function detectarTipoPorNodes(nodes) {
 }
 
 async function main() {
-  const fluxos = await Fluxo.findAll({ order: [['id', 'ASC']] });
+  const empresaId = parseInt(process.env.EMPRESA_ID || '1', 10);
+  const fluxos = await Fluxo.findAll({ where: { empresaId }, order: [['id', 'ASC']] });
   let alterados = 0;
 
   for (const f of fluxos) {

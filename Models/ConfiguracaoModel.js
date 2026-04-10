@@ -7,10 +7,15 @@ const Configuracao = sequelize.define('Configuracao', {
     primaryKey: true,
     autoIncrement: true
   },
+  empresaId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    references: { model: 'empresas', key: 'id' }
+  },
   chave: {
     type: DataTypes.STRING(100),
-    allowNull: false,
-    unique: true
+    allowNull: false
   },
   valor: {
     type: DataTypes.TEXT,
@@ -30,7 +35,10 @@ const Configuracao = sequelize.define('Configuracao', {
   }
 }, {
   tableName: 'configuracoes',
-  timestamps: true
+  timestamps: true,
+  indexes: [
+    { unique: true, fields: ['empresaId', 'chave'], name: 'uniq_config_empresa_chave' }
+  ]
 });
 
 module.exports = { Configuracao, sequelize };

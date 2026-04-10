@@ -23,12 +23,18 @@ const requisicaoService = require('./services/requisicaoExternaService');
 const { router: dashboardRoutes, setWhatsappClient } = require('./routes/dashboardRoutes');
 const iaRoutes = require('./routes/iaRoutes');
 const fluxoRoutes = require('./routes/fluxoRoutes');
+const integracaoTrelloRoutes = require('./routes/integracaoTrelloRoutes');
+const { handleTrelloWebhook, handleTrelloWebhookHead } = require('./routes/trelloWebhookPublic');
+const authRoutes = require('./routes/authRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const { requireAuth, requireSuperAdmin, resolveTenant } = require('./middleware/authMiddleware');
 const fluxoService = require('./services/fluxoService');
 const fluxoExecutor = require('./services/fluxoExecutor');
 const indicacaoService = require('./services/indicacaoService');
 const metaService = require('./services/metaService');
 const { setupDatabase } = require('./database/setup');
 const { dbConfig } = require('./database/connection');
+const { getEmpresaId } = require('./context/tenantContext');
 
 // Handoff: quando o fluxo visual de campanha termina (ex.: após entrada no grupo), passa o usuário para a campanha legada na Missão 2
 fluxoExecutor.setOnCampanhaFlowEnd(async (client, chatId, fluxo) => {
@@ -268,20 +274,23 @@ app.use(bodyParser.json({ limit: '10mb' }));
 // Servir arquivos estáticos (Dashboard)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Rotas do Dashboard
-app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', requireAuth, requireSuperAdmin, adminRoutes);
+app.use('/api/dashboard', requireAuth, resolveTenant, dashboardRoutes);
+app.use('/api/ia', requireAuth, resolveTenant, iaRoutes);
+app.use('/api/fluxos', requireAuth, resolveTenant, fluxoRoutes);
 
-// Rotas de IA, Prompts e Requisições
-app.use('/api/ia', iaRoutes);
-
-// Rotas de Fluxos
-app.use('/api/fluxos', fluxoRoutes);
+// Webhook Trello (público) — deve vir ANTES de /api/integrations/trello com auth
+app.head('/api/integrations/trello/webhook/:token', handleTrelloWebhookHead);
+app.post('/api/integrations/trello/webhook/:token', handleTrelloWebhook);
+app.use('/api/integrations/trello', requireAuth, resolveTenant, integracaoTrelloRoutes);
 
 
 
 const client = new Client({
     authStrategy: new LocalAuth({
-        clientId: "bot-ia-pizzaria3" // Identificador único para a sessão deste cliente
+        // Uma pasta de sessão por instância: use WHATSAPP_CLIENT_ID diferente em cada deploy (ex.: bot-loja-a / bot-loja-b).
+        clientId: process.env.WHATSAPP_CLIENT_ID || 'bot-ia-pizzaria3'
     }),
     puppeteer: {
         //executablePath: '/usr/bin/google-chrome', // Caminho para o Chromium
@@ -590,6 +599,7 @@ async function iniciarServidor() {
     // Inicia o servidor HTTP
     app.listen(port, () => {
       console.log(`\n🚀 Servidor rodando em http://localhost:${port}`);
+      console.log(`🔐 Login: http://localhost:${port}/login.html`);
       console.log(`📊 Dashboard: http://localhost:${port}/dashboard.html`);
       console.log(`🎛️ Atendimento automático: ${config.atendimentoAutomatico ? '✅ ATIVADO' : '❌ DESATIVADO'}`);
     });
@@ -1488,8 +1498,23 @@ client.on('group_join', async (notification) => {
       // ============================================================
       // 📊 ATUALIZAÇÃO NO BANCO DE DADOS (CRM)
       // ============================================================
-      const sql = `UPDATE contatos SET cam_grupo = 1 WHERE whatsapp_id = ?`;
-      const [result] = await connection.execute(sql, [numeroReal]);
+      const eidBot = getEmpresaId();
+      let result;
+      try {
+        [result] = await connection.execute(
+          'UPDATE contatos SET cam_grupo = 1 WHERE whatsapp_id = ? AND empresa_id = ?',
+          [numeroReal, eidBot]
+        );
+      } catch (sqlErr) {
+        if (sqlErr.code === 'ER_BAD_FIELD_ERROR') {
+          [result] = await connection.execute(
+            'UPDATE contatos SET cam_grupo = 1 WHERE whatsapp_id = ?',
+            [numeroReal]
+          );
+        } else {
+          throw sqlErr;
+        }
+      }
 
       if (result.affectedRows > 0) {
         console.log(`✅ SUCESSO: Lead ${numeroReal} marcado como entrou no grupo.`);
@@ -1498,11 +1523,22 @@ client.on('group_join', async (notification) => {
         } catch (e) {
           console.warn('⚠️ Meta entrada_grupo:', e.message);
         }
-        // Busca o id_negociacao do contato para mover no funil
-        const [rows] = await connection.execute(
-          'SELECT id_negociacao FROM contatos WHERE whatsapp_id = ?', 
-          [numeroReal]
-        );
+        let rows;
+        try {
+          [rows] = await connection.execute(
+            'SELECT id_negociacao FROM contatos WHERE whatsapp_id = ? AND empresa_id = ?',
+            [numeroReal, eidBot]
+          );
+        } catch (sqlErr) {
+          if (sqlErr.code === 'ER_BAD_FIELD_ERROR') {
+            [rows] = await connection.execute(
+              'SELECT id_negociacao FROM contatos WHERE whatsapp_id = ?',
+              [numeroReal]
+            );
+          } else {
+            throw sqlErr;
+          }
+        }
         
         if (rows.length > 0 && rows[0].id_negociacao) {
           await moverCardNoFunil(rows[0].id_negociacao);

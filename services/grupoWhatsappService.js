@@ -1,17 +1,25 @@
 const { GrupoWhatsapp } = require('../Models/GrupoWhatsappModel');
 const { Op } = require('sequelize');
+const { getEmpresaId } = require('../context/tenantContext');
 
-// Cache em memória
-let cacheGrupos = null;
-let cacheTimestamp = null;
-const CACHE_TTL = 30000; // 30 segundos
+const CACHE_TTL = 30000;
+const cacheByEmpresa = new Map();
+
+function getBucket() {
+  const eid = getEmpresaId();
+  if (!cacheByEmpresa.has(eid)) {
+    cacheByEmpresa.set(eid, { cacheGrupos: null, cacheTimestamp: null });
+  }
+  return cacheByEmpresa.get(eid);
+}
 
 async function sincronizarGrupos(client) {
-  console.log('🔄 Iniciando sincronização de grupos do WhatsApp...');
+  const eid = getEmpresaId();
+  console.log(`🔄 Sincronização de grupos (empresa ${eid})...`);
 
   try {
     const chats = await client.getChats();
-    const grupos = chats.filter(chat => chat.isGroup);
+    const grupos = chats.filter((chat) => chat.isGroup);
 
     console.log(`📋 Encontrados ${grupos.length} grupos`);
 
@@ -25,11 +33,9 @@ async function sincronizarGrupos(client) {
       const nome = grupo.name;
       const participantes = grupo.participants?.length || 0;
 
-      // Busca grupo existente no banco
-      const grupoExistente = await GrupoWhatsapp.findOne({ where: { grupoId } });
+      const grupoExistente = await GrupoWhatsapp.findOne({ where: { grupoId, empresaId: eid } });
       const linkExistente = grupoExistente?.linkConvite;
 
-      // Tenta obter link de convite automaticamente
       let linkConvite = null;
       try {
         const inviteCode = await grupo.getInviteCode();
@@ -39,18 +45,17 @@ async function sincronizarGrupos(client) {
           console.log(`🔗 Link obtido automaticamente: ${nome}`);
         }
       } catch (e) {
-        // Não é admin do grupo, não consegue pegar o link automaticamente
+        // não é admin
       }
 
-      // Se não conseguiu obter link automaticamente, mantém o existente (manual)
       const linkFinal = linkConvite || linkExistente;
       if (!linkConvite && linkExistente) {
         linksManuais++;
       }
 
       if (!grupoExistente) {
-        // Criar novo grupo
         await GrupoWhatsapp.create({
+          empresaId: eid,
           grupoId,
           nome,
           participantes,
@@ -60,7 +65,6 @@ async function sincronizarGrupos(client) {
         novos++;
         console.log(`➕ Novo grupo: ${nome} ${linkFinal ? '✅' : '⚠️ sem link'}`);
       } else {
-        // Atualizar grupo existente
         await grupoExistente.update({
           nome,
           participantes,
@@ -71,15 +75,11 @@ async function sincronizarGrupos(client) {
       }
     }
 
-    // Invalida cache
-    cacheTimestamp = null;
+    const bucket = getBucket();
+    bucket.cacheTimestamp = null;
 
-    console.log(`\n✅ Sincronização concluída:`);
-    console.log(`   📊 Total: ${grupos.length} grupos`);
-    console.log(`   ➕ Novos: ${novos}`);
-    console.log(`   🔄 Atualizados: ${atualizados}`);
-    console.log(`   🔗 Links automáticos: ${linksObtidos}`);
-    console.log(`   ✋ Links manuais preservados: ${linksManuais}`);
+    console.log(`\n✅ Sincronização concluída (empresa ${eid}):`);
+    console.log(`   📊 Total: ${grupos.length} grupos | ➕ Novos: ${novos} | 🔄 Atualizados: ${atualizados}`);
 
     return {
       total: grupos.length,
@@ -88,7 +88,6 @@ async function sincronizarGrupos(client) {
       linksObtidos,
       linksManuais
     };
-
   } catch (error) {
     console.error('❌ Erro na sincronização:', error.message);
     throw error;
@@ -96,7 +95,8 @@ async function sincronizarGrupos(client) {
 }
 
 async function listarGrupos(filtros = {}) {
-  const where = {};
+  const eid = getEmpresaId();
+  const where = { empresaId: eid };
 
   if (filtros.ativo !== undefined) {
     where.ativo = filtros.ativo;
@@ -110,7 +110,7 @@ async function listarGrupos(filtros = {}) {
     where.bairro = { [Op.like]: `%${filtros.bairro}%` };
   }
 
-  return await GrupoWhatsapp.findAll({
+  return GrupoWhatsapp.findAll({
     where,
     order: [['nome', 'ASC']]
   });
@@ -118,40 +118,35 @@ async function listarGrupos(filtros = {}) {
 
 async function getGruposAtivos() {
   const agora = Date.now();
+  const bucket = getBucket();
+  const eid = getEmpresaId();
 
-  if (cacheGrupos && cacheTimestamp && (agora - cacheTimestamp) < CACHE_TTL) {
-    return cacheGrupos;
+  if (bucket.cacheGrupos && bucket.cacheTimestamp && (agora - bucket.cacheTimestamp) < CACHE_TTL) {
+    return bucket.cacheGrupos;
   }
 
-  cacheGrupos = await GrupoWhatsapp.findAll({
-    where: { ativo: true },
+  bucket.cacheGrupos = await GrupoWhatsapp.findAll({
+    where: { ativo: true, empresaId: eid },
     order: [['bairro', 'ASC']]
   });
 
-  cacheTimestamp = agora;
-  return cacheGrupos;
+  bucket.cacheTimestamp = agora;
+  return bucket.cacheGrupos;
 }
 
 async function getGrupoPorBairro(bairro) {
+  const eid = getEmpresaId();
   const bairroLower = bairro.toLowerCase().trim();
-  
-  console.log(`🔍 [DEBUG] Buscando grupo para bairro: "${bairro}" (normalizado: "${bairroLower}")`);
 
-  // Busca grupo específico do bairro
+  console.log(`🔍 [DEBUG] Buscando grupo para bairro: "${bairro}" (empresa ${eid})`);
+
   const grupo = await GrupoWhatsapp.findOne({
     where: {
+      empresaId: eid,
       ativo: true,
       bairro: { [Op.like]: `%${bairroLower}%` }
     }
   });
-
-  console.log(`🔍 [DEBUG] Resultado busca específica:`, grupo ? {
-    id: grupo.id,
-    nome: grupo.nome,
-    bairro: grupo.bairro,
-    linkConvite: grupo.linkConvite,
-    ativo: grupo.ativo
-  } : 'Nenhum encontrado');
 
   if (grupo) {
     return {
@@ -163,20 +158,13 @@ async function getGrupoPorBairro(bairro) {
     };
   }
 
-  // Busca grupo geral
   const grupoGeral = await GrupoWhatsapp.findOne({
     where: {
+      empresaId: eid,
       ativo: true,
       isGrupoGeral: true
     }
   });
-
-  console.log(`🔍 [DEBUG] Resultado busca grupo geral:`, grupoGeral ? {
-    id: grupoGeral.id,
-    nome: grupoGeral.nome,
-    linkConvite: grupoGeral.linkConvite,
-    isGrupoGeral: grupoGeral.isGrupoGeral
-  } : 'Nenhum encontrado');
 
   if (grupoGeral) {
     return {
@@ -196,7 +184,8 @@ async function getGrupoPorBairro(bairro) {
 }
 
 async function atualizarGrupo(grupoId, dados) {
-  const grupo = await GrupoWhatsapp.findOne({ where: { grupoId } });
+  const eid = getEmpresaId();
+  const grupo = await GrupoWhatsapp.findOne({ where: { grupoId, empresaId: eid } });
 
   if (!grupo) {
     throw new Error(`Grupo ${grupoId} não encontrado`);
@@ -204,14 +193,14 @@ async function atualizarGrupo(grupoId, dados) {
 
   await grupo.update(dados);
 
-  // Invalida cache
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
 
   return grupo;
 }
 
 async function ativarGrupo(grupoId, bairro = null, isGrupoGeral = false) {
-  return await atualizarGrupo(grupoId, {
+  return atualizarGrupo(grupoId, {
     ativo: true,
     bairro,
     isGrupoGeral,
@@ -220,21 +209,20 @@ async function ativarGrupo(grupoId, bairro = null, isGrupoGeral = false) {
 }
 
 async function desativarGrupo(grupoId) {
-  return await atualizarGrupo(grupoId, {
+  return atualizarGrupo(grupoId, {
     ativo: false,
     isGrupoGeral: false
   });
 }
 
 async function definirGrupoGeral(grupoId) {
-  // Remove flag de grupo geral de todos
+  const eid = getEmpresaId();
   await GrupoWhatsapp.update(
     { isGrupoGeral: false },
-    { where: { isGrupoGeral: true } }
+    { where: { isGrupoGeral: true, empresaId: eid } }
   );
 
-  // Define o novo grupo geral
-  return await atualizarGrupo(grupoId, {
+  return atualizarGrupo(grupoId, {
     ativo: true,
     isGrupoGeral: true,
     tipo: 'campanha'
@@ -242,9 +230,11 @@ async function definirGrupoGeral(grupoId) {
 }
 
 async function isGrupoCampanha(grupoId) {
+  const eid = getEmpresaId();
   const grupo = await GrupoWhatsapp.findOne({
     where: {
       grupoId,
+      empresaId: eid,
       ativo: true,
       tipo: 'campanha'
     }
@@ -258,10 +248,12 @@ async function isGrupoCampanha(grupoId) {
 }
 
 async function getEstatisticas() {
-  const total = await GrupoWhatsapp.count();
-  const ativos = await GrupoWhatsapp.count({ where: { ativo: true } });
-  const campanha = await GrupoWhatsapp.count({ where: { tipo: 'campanha', ativo: true } });
-  const totalParticipantes = await GrupoWhatsapp.sum('participantes', { where: { ativo: true } });
+  const eid = getEmpresaId();
+  const base = { empresaId: eid };
+  const total = await GrupoWhatsapp.count({ where: base });
+  const ativos = await GrupoWhatsapp.count({ where: { ...base, ativo: true } });
+  const campanha = await GrupoWhatsapp.count({ where: { ...base, tipo: 'campanha', ativo: true } });
+  const totalParticipantes = await GrupoWhatsapp.sum('participantes', { where: { ...base, ativo: true } });
 
   return {
     total,
@@ -272,8 +264,9 @@ async function getEstatisticas() {
 }
 
 function invalidarCache() {
-  cacheTimestamp = null;
-  cacheGrupos = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
+  bucket.cacheGrupos = null;
 }
 
 module.exports = {

@@ -1,4 +1,9 @@
+const bcrypt = require('bcryptjs');
+const { setupAssociations } = require('./associations');
 const { sequelize, testarConexao } = require('./connection');
+const { runTenantMigration } = require('./tenantMigration');
+const { Empresa } = require('../Models/EmpresaModel');
+const { Usuario } = require('../Models/UsuarioModel');
 const { Configuracao } = require('../Models/ConfiguracaoModel');
 const { GrupoWhatsapp } = require('../Models/GrupoWhatsappModel');
 const { Gatilho } = require('../Models/GatilhoModel');
@@ -6,6 +11,7 @@ const { Prompt } = require('../Models/PromptModel');
 const { ProvedorIA } = require('../Models/ProvedorIAModel');
 const { RequisicaoExterna } = require('../Models/RequisicaoExternaModel');
 const { Fluxo } = require('../Models/FluxoModel');
+require('../Models/IntegracaoTrelloModel');
 
 async function setupDatabase() {
   console.log('🔧 Iniciando setup do banco de dados...\n');
@@ -17,9 +23,23 @@ async function setupDatabase() {
       throw new Error('Não foi possível conectar ao MySQL. Verifique se o serviço está rodando.');
     }
 
-    // Sincroniza as tabelas
+    await Empresa.sync({ alter: true });
+    const [empresaPrincipal] = await Empresa.findOrCreate({
+      where: { slug: 'principal' },
+      defaults: { nome: 'Empresa principal', slug: 'principal', ativo: true }
+    });
+    const EID = empresaPrincipal.id;
+
     await sequelize.sync({ alter: true });
     console.log('✅ Tabelas sincronizadas');
+
+    setupAssociations();
+
+    await runTenantMigration(sequelize);
+
+    try {
+      await sequelize.query('UPDATE metas SET empresa_id = ? WHERE empresa_id IS NULL', { replacements: [EID] });
+    } catch (_) {}
 
     // Insere configurações padrão se não existirem
     const configsPadrao = [
@@ -97,16 +117,17 @@ async function setupDatabase() {
 
     for (const config of configsPadrao) {
       await Configuracao.findOrCreate({
-        where: { chave: config.chave },
-        defaults: config
+        where: { chave: config.chave, empresaId: EID },
+        defaults: { ...config, empresaId: EID }
       });
     }
     console.log('✅ Configurações padrão inseridas');
 
     // Insere gatilho padrão da campanha
     await Gatilho.findOrCreate({
-      where: { nome: 'campanha_desconto' },
+      where: { nome: 'campanha_desconto', empresaId: EID },
       defaults: {
+        empresaId: EID,
         nome: 'campanha_desconto',
         tipo: 'campanha',
         palavrasChave: ['campanha', '30% de desconto', 'desconto', 'promoção'],
@@ -119,8 +140,9 @@ async function setupDatabase() {
 
     // Insere provedor de IA padrão (Alibaba/Qwen)
     await ProvedorIA.findOrCreate({
-      where: { nome: 'qwen-alibaba' },
+      where: { nome: 'qwen-alibaba', empresaId: EID },
       defaults: {
+        empresaId: EID,
         nome: 'qwen-alibaba',
         descricao: 'Qwen Plus via Alibaba Cloud',
         tipo: 'alibaba',
@@ -135,8 +157,9 @@ async function setupDatabase() {
     });
 
     await ProvedorIA.findOrCreate({
-      where: { nome: 'openrouter-claude' },
+      where: { nome: 'openrouter-claude', empresaId: EID },
       defaults: {
+        empresaId: EID,
         nome: 'openrouter-claude',
         descricao: 'Claude via OpenRouter',
         tipo: 'openrouter',
@@ -157,7 +180,7 @@ async function setupDatabase() {
         nome: 'atendimento_inicial',
         descricao: 'Prompt principal para atendimento de pedidos',
         tipo: 'atendimento',
-        conteudo: `🤖 Agente de Atendimento – Pizzaria Tempero Napolitano (WhatsApp)
+        conteudo: `🤖 Agente de Atendimento – CS - Canivete Suíço (WhatsApp)
 
 🧩 Identidade:
 Você é o assistente virtual da Tempero Napolitano. Seu papel é atender com simpatia, sugerir pedidos, responder dúvidas e montar o pedido passo a passo.
@@ -208,7 +231,7 @@ Considere erros de ortografia, pois a correção pode identificar o sabor solici
         nome: 'campanha_desconto',
         descricao: 'Prompt para campanha de 30% de desconto',
         tipo: 'campanha',
-        conteudo: `🎁 Agente de Campanha – Pizzaria Tempero Napolitano (WhatsApp)
+        conteudo: `🎁 Agente de Campanha – CS - Canivete Suíço (WhatsApp)
 
 🧩 Identidade:
 Você é o assistente de campanhas da Tempero Napolitano. Seu papel é guiar o cliente pelas missões da campanha de até 30% de desconto.
@@ -258,8 +281,8 @@ Exemplos:
 
     for (const prompt of promptsPadrao) {
       await Prompt.findOrCreate({
-        where: { nome: prompt.nome },
-        defaults: prompt
+        where: { nome: prompt.nome, empresaId: EID },
+        defaults: { ...prompt, empresaId: EID }
       });
     }
     console.log('✅ Prompts padrão inseridos');
@@ -324,11 +347,31 @@ Exemplos:
 
     for (const req of requisicoesPadrao) {
       await RequisicaoExterna.findOrCreate({
-        where: { tipo: req.tipo },
-        defaults: req
+        where: { tipo: req.tipo, empresaId: EID },
+        defaults: { ...req, empresaId: EID }
       });
     }
     console.log('✅ Requisições externas inseridas');
+
+    const superEmail = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+    const superPass = process.env.SUPER_ADMIN_PASSWORD || '';
+    if (superEmail && superPass) {
+      const existe = await Usuario.findOne({ where: { email: superEmail } });
+      if (!existe) {
+        const passwordHash = await bcrypt.hash(superPass, 10);
+        await Usuario.create({
+          empresaId: null,
+          email: superEmail,
+          passwordHash,
+          nome: 'Super administrador',
+          role: 'super_admin',
+          ativo: true
+        });
+        console.log('✅ Usuário super_admin criado (variáveis SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD).');
+      }
+    } else {
+      console.log('ℹ️  Defina SUPER_ADMIN_EMAIL e SUPER_ADMIN_PASSWORD no .env para criar o primeiro super admin.');
+    }
 
     console.log('\n🎉 Setup do banco de dados concluído com sucesso!');
 

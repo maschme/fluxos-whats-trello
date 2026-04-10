@@ -2,6 +2,7 @@
 
 const mysql = require('mysql2/promise');
 const { dbConfig } = require('../database/connection');
+const { getEmpresaId } = require('../context/tenantContext');
 
 const config = {
   host: dbConfig.host,
@@ -16,18 +17,24 @@ function normalizarWhatsappId(id) {
   return String(id).replace(/\D/g, '');
 }
 
-/**
- * Lista todos os contatos da tabela contatos.
- */
 async function listarContatos() {
+  const eid = getEmpresaId();
   const conn = await mysql.createConnection(config);
   try {
     const [rows] = await conn.execute(
-      `SELECT id, whatsapp_id, nome, cam_grupo, id_negociacao, qt_indicados, cam_indicacoes, created_at, updated_at
-       FROM contatos ORDER BY updated_at DESC, created_at DESC`
+      `SELECT id, whatsapp_id, nome, cam_grupo, id_negociacao, qt_indicados, cam_indicacoes, created_at, updated_at, empresa_id
+       FROM contatos WHERE empresa_id = ? ORDER BY updated_at DESC, created_at DESC`,
+      [eid]
     );
     return rows;
   } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') {
+      const [rowsLegacy] = await conn.execute(
+        `SELECT id, whatsapp_id, nome, cam_grupo, id_negociacao, qt_indicados, cam_indicacoes, created_at, updated_at
+         FROM contatos ORDER BY updated_at DESC, created_at DESC`
+      );
+      return rowsLegacy;
+    }
     if (e.code === 'ER_NO_SUCH_TABLE') return [];
     throw e;
   } finally {
@@ -35,20 +42,45 @@ async function listarContatos() {
   }
 }
 
-/**
- * Deleta um contato (e suas metas). Útil para resetar e testar fluxo de novo.
- * Também remove indicações onde ele é o indicador.
- */
 async function deletarContato(whatsappId) {
   const wid = normalizarWhatsappId(whatsappId);
   if (!wid) throw new Error('whatsapp_id inválido');
+  const eid = getEmpresaId();
 
   const conn = await mysql.createConnection(config);
   try {
     await conn.execute('DELETE FROM contato_metas WHERE whatsapp_id = ?', [wid]);
-    await conn.execute('DELETE FROM indicacoes WHERE indicador_whatsapp_id = ? OR indicador_whatsapp_id = ?', [wid, wid + '@c.us']);
-    const [result] = await conn.execute('DELETE FROM contatos WHERE whatsapp_id = ?', [wid]);
-    return { deleted: result.affectedRows > 0, whatsapp_id: wid };
+
+    try {
+      await conn.execute(
+        `DELETE FROM indicacoes WHERE empresa_id = ? AND (indicador_whatsapp_id = ? OR indicador_whatsapp_id = ?)`,
+        [eid, wid, wid + '@c.us']
+      );
+    } catch (err) {
+      if (err.code === 'ER_BAD_FIELD_ERROR') {
+        await conn.execute(
+          'DELETE FROM indicacoes WHERE indicador_whatsapp_id = ? OR indicador_whatsapp_id = ?',
+          [wid, wid + '@c.us']
+        );
+      } else {
+        throw err;
+      }
+    }
+
+    let affectedRows = 0;
+    try {
+      const [delRes] = await conn.execute('DELETE FROM contatos WHERE whatsapp_id = ? AND empresa_id = ?', [wid, eid]);
+      affectedRows = delRes.affectedRows;
+    } catch (err) {
+      if (err.code === 'ER_BAD_FIELD_ERROR') {
+        const [delRes] = await conn.execute('DELETE FROM contatos WHERE whatsapp_id = ?', [wid]);
+        affectedRows = delRes.affectedRows;
+      } else {
+        throw err;
+      }
+    }
+
+    return { deleted: affectedRows > 0, whatsapp_id: wid };
   } finally {
     await conn.end();
   }

@@ -7,10 +7,15 @@ const RequisicaoExterna = sequelize.define('RequisicaoExterna', {
     primaryKey: true,
     autoIncrement: true
   },
+  empresaId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    references: { model: 'empresas', key: 'id' }
+  },
   nome: {
     type: DataTypes.STRING(100),
-    allowNull: false,
-    unique: true
+    allowNull: false
   },
   tipo: {
     type: DataTypes.STRING(50),
@@ -76,7 +81,10 @@ const RequisicaoExterna = sequelize.define('RequisicaoExterna', {
   }
 }, {
   tableName: 'requisicoes_externas',
-  timestamps: true
+  timestamps: true,
+  indexes: [
+    { unique: true, fields: ['empresaId', 'tipo'], name: 'uniq_req_ext_empresa_tipo' }
+  ]
 });
 
 module.exports = { RequisicaoExterna };

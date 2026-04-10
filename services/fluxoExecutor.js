@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 const { dbConfig } = require('../database/connection');
+const { getEmpresaId } = require('../context/tenantContext');
 const fluxoService = require('./fluxoService');
 const promptService = require('./promptService');
 const provedorService = require('./provedorIAService');
@@ -456,6 +457,7 @@ Responda apenas SIM ou NAO (sem pontuação ou explicação):`;
             break;
           }
           try {
+            const eid = getEmpresaId();
             const conn = await mysql.createConnection({
               host: dbConfig.host,
               port: dbConfig.port || 3306,
@@ -464,29 +466,46 @@ Responda apenas SIM ou NAO (sem pontuação ou explicação):`;
               database: dbConfig.database
             });
             let rows = [];
-            const [rows1] = await conn.execute(
-              `SELECT \`${campo}\` FROM contatos WHERE whatsapp_id = ? LIMIT 1`,
-              [wid]
-            );
-            rows = rows1;
+            async function selectContato(idWa) {
+              try {
+                const [r] = await conn.execute(
+                  `SELECT \`${campo}\` FROM contatos WHERE whatsapp_id = ? AND empresa_id = ? LIMIT 1`,
+                  [idWa, eid]
+                );
+                return r;
+              } catch (err) {
+                if (err.code === 'ER_BAD_FIELD_ERROR') {
+                  const [r] = await conn.execute(
+                    `SELECT \`${campo}\` FROM contatos WHERE whatsapp_id = ? LIMIT 1`,
+                    [idWa]
+                  );
+                  return r;
+                }
+                throw err;
+              }
+            }
+            rows = await selectContato(wid);
             if (rows.length === 0 && this.chatId && String(this.chatId) !== wid) {
-              const [rows2] = await conn.execute(
-                `SELECT \`${campo}\` FROM contatos WHERE whatsapp_id = ? LIMIT 1`,
-                [String(this.chatId).trim()]
-              );
-              rows = rows2;
+              rows = await selectContato(String(this.chatId).trim());
             }
             if (rows.length === 0) {
               try {
-                await conn.execute(
-                  'INSERT INTO contatos (whatsapp_id) VALUES (?) ON DUPLICATE KEY UPDATE updated_at = NOW()',
-                  [wid]
-                );
-                const [rowsNovo] = await conn.execute(
-                  `SELECT \`${campo}\` FROM contatos WHERE whatsapp_id = ? LIMIT 1`,
-                  [wid]
-                );
-                rows = rowsNovo;
+                try {
+                  await conn.execute(
+                    'INSERT INTO contatos (whatsapp_id, empresa_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE updated_at = NOW()',
+                    [wid, eid]
+                  );
+                } catch (ins) {
+                  if (ins.code === 'ER_BAD_FIELD_ERROR') {
+                    await conn.execute(
+                      'INSERT INTO contatos (whatsapp_id) VALUES (?) ON DUPLICATE KEY UPDATE updated_at = NOW()',
+                      [wid]
+                    );
+                  } else if (ins.code !== 'ER_NO_SUCH_TABLE') {
+                    throw ins;
+                  }
+                }
+                rows = await selectContato(wid);
               } catch (ins) {
                 if (ins.code !== 'ER_NO_SUCH_TABLE') console.warn('⚠️ Ler contato (criar linha):', ins.message);
               }

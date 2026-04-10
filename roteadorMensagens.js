@@ -37,7 +37,7 @@ async function roteadorDeMensagem(msg, db, client) {
   }
 
   if (intencao === 'cumprimento') {
-    await client.sendMessage(telefone, 'Olá! 😄 Bem-vindo à Pizzaria! Posso te ajudar com um pedido ou tirar alguma dúvida?');
+    await client.sendMessage(telefone, 'Olá! 😄 Bem-vindo à CS - Canivete Suíço! Posso te ajudar com um pedido ou tirar alguma dúvida?');
     return;
   }
 
@@ -107,7 +107,7 @@ E como você costuma pedir entre 17:40 e 19:53, prepararemos o pedido para chega
 
 Ficou com água na boca? 😍 Se sim, quer confirmar o pedido? Basta responder com um "Sim" ou "Ok"! Estamos ansiosos para te servir de novo! 🥳👍
 
-Atenciosamente, PizzaIAlo da Pizzaria Tempero Napolitano 🍕`
+Atenciosamente, CS - Canivete Suíço 🍕`
 */
   await gpt_gerar_audio(mensagem);
 const path = require('path');

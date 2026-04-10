@@ -1,74 +1,86 @@
 const { ProvedorIA } = require('../Models/ProvedorIAModel');
 const axios = require('axios');
 const OpenAI = require('openai');
+const { getEmpresaId } = require('../context/tenantContext');
 
-// Cache de provedores e clientes
-let cacheProvedores = {};
-let clientesIA = {};
-let provedorPrincipal = null;
+const stateByEmpresa = new Map();
+
+function getState() {
+  const eid = getEmpresaId();
+  if (!stateByEmpresa.has(eid)) {
+    stateByEmpresa.set(eid, {
+      cacheProvedores: {},
+      clientesIA: {},
+      provedorPrincipal: null
+    });
+  }
+  return stateByEmpresa.get(eid);
+}
 
 async function carregarProvedores() {
-  const provedores = await ProvedorIA.findAll({ where: { ativo: true } });
-  cacheProvedores = {};
-  clientesIA = {};
-  
+  const eid = getEmpresaId();
+  const provedores = await ProvedorIA.findAll({ where: { ativo: true, empresaId: eid } });
+  const st = getState();
+  st.cacheProvedores = {};
+  st.clientesIA = {};
+  st.provedorPrincipal = null;
+
   for (const p of provedores) {
-    cacheProvedores[p.nome] = p;
-    
-    // Cria cliente OpenAI para provedores compatíveis
+    st.cacheProvedores[p.nome] = p;
+
     if (['openai', 'alibaba', 'openrouter'].includes(p.tipo)) {
-      clientesIA[p.nome] = new OpenAI({
+      st.clientesIA[p.nome] = new OpenAI({
         apiKey: p.apiKey,
         baseURL: p.baseUrl
       });
     }
-    
+
     if (p.isPrincipal) {
-      provedorPrincipal = p;
+      st.provedorPrincipal = p;
     }
   }
-  
-  console.log(`🤖 ${provedores.length} provedores de IA carregados`);
-  return cacheProvedores;
+
+  console.log(`🤖 ${provedores.length} provedores de IA carregados (empresa ${eid})`);
+  return st.cacheProvedores;
 }
 
 async function getProvedorPrincipal() {
-  if (!provedorPrincipal) {
+  const st = getState();
+  if (!st.provedorPrincipal) {
     await carregarProvedores();
   }
-  return provedorPrincipal;
+  return st.provedorPrincipal;
 }
 
 async function enviarParaIA(mensagens, provedorNome = null, modelo = null) {
-  // Usa provedor principal se não especificado
-  let provedor = provedorNome ? cacheProvedores[provedorNome] : provedorPrincipal;
-  
+  const st = getState();
+  let provedor = provedorNome ? st.cacheProvedores[provedorNome] : st.provedorPrincipal;
+
   if (!provedor) {
     await carregarProvedores();
-    provedor = provedorNome ? cacheProvedores[provedorNome] : provedorPrincipal;
+    provedor = provedorNome ? st.cacheProvedores[provedorNome] : st.provedorPrincipal;
   }
-  
+
   if (!provedor) {
     throw new Error('Nenhum provedor de IA configurado');
   }
-  
+
   const modeloFinal = modelo || provedor.modeloPadrao;
-  const cliente = clientesIA[provedor.nome];
-  
+  const cliente = st.clientesIA[provedor.nome];
+
   try {
     const start = Date.now();
-    
+
     if (cliente) {
-      // Usa cliente OpenAI
       const completion = await cliente.chat.completions.create({
         model: modeloFinal,
         messages: mensagens,
         ...provedor.configuracoes
       });
-      
+
       const duration = Date.now() - start;
       const usage = completion.usage;
-      
+
       console.log({
         provedor: provedor.nome,
         modelo: modeloFinal,
@@ -76,34 +88,33 @@ async function enviarParaIA(mensagens, provedorNome = null, modelo = null) {
         tokens_resposta: usage?.completion_tokens,
         tempo_ms: duration
       });
-      
+
       return completion.choices[0].message.content;
-    } else {
-      // Usa axios para APIs custom
-      const response = await axios.post(
-        provedor.baseUrl,
-        {
-          model: modeloFinal,
-          messages: mensagens,
-          ...provedor.configuracoes
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${provedor.apiKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      const duration = Date.now() - start;
-      console.log({
-        provedor: provedor.nome,
-        modelo: modeloFinal,
-        tempo_ms: duration
-      });
-      
-      return response.data.choices[0].message.content;
     }
+
+    const response = await axios.post(
+      provedor.baseUrl,
+      {
+        model: modeloFinal,
+        messages: mensagens,
+        ...provedor.configuracoes
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${provedor.apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const duration = Date.now() - start;
+    console.log({
+      provedor: provedor.nome,
+      modelo: modeloFinal,
+      tempo_ms: duration
+    });
+
+    return response.data.choices[0].message.content;
   } catch (error) {
     console.error(`❌ Erro ao chamar IA (${provedor.nome}):`, error.message);
     throw error;
@@ -111,69 +122,72 @@ async function enviarParaIA(mensagens, provedorNome = null, modelo = null) {
 }
 
 async function listarProvedores(filtros = {}) {
-  const where = {};
+  const eid = getEmpresaId();
+  const where = { empresaId: eid };
   if (filtros.ativo !== undefined) where.ativo = filtros.ativo;
   if (filtros.tipo) where.tipo = filtros.tipo;
-  
-  return await ProvedorIA.findAll({
+
+  return ProvedorIA.findAll({
     where,
     order: [['isPrincipal', 'DESC'], ['nome', 'ASC']]
   });
 }
 
 async function getProvedorPorId(id) {
-  return await ProvedorIA.findByPk(id);
+  const eid = getEmpresaId();
+  return ProvedorIA.findOne({ where: { id, empresaId: eid } });
 }
 
 async function criarProvedor(dados) {
-  // Se é principal, remove flag dos outros
+  const eid = getEmpresaId();
   if (dados.isPrincipal) {
-    await ProvedorIA.update({ isPrincipal: false }, { where: { isPrincipal: true } });
+    await ProvedorIA.update({ isPrincipal: false }, { where: { isPrincipal: true, empresaId: eid } });
   }
-  
-  const provedor = await ProvedorIA.create(dados);
-  await carregarProvedores(); // Recarrega cache
+
+  const provedor = await ProvedorIA.create({ ...dados, empresaId: eid });
+  await carregarProvedores();
   return provedor;
 }
 
 async function atualizarProvedor(id, dados) {
-  const provedor = await ProvedorIA.findByPk(id);
+  const provedor = await getProvedorPorId(id);
   if (!provedor) throw new Error('Provedor não encontrado');
-  
-  // Se é principal, remove flag dos outros
+
+  const eid = getEmpresaId();
   if (dados.isPrincipal) {
-    await ProvedorIA.update({ isPrincipal: false }, { where: { isPrincipal: true } });
+    await ProvedorIA.update({ isPrincipal: false }, { where: { isPrincipal: true, empresaId: eid } });
   }
-  
+
   await provedor.update(dados);
-  await carregarProvedores(); // Recarrega cache
+  await carregarProvedores();
   return provedor;
 }
 
 async function deletarProvedor(id) {
-  const provedor = await ProvedorIA.findByPk(id);
+  const provedor = await getProvedorPorId(id);
   if (!provedor) throw new Error('Provedor não encontrado');
-  
+
   await provedor.destroy();
-  await carregarProvedores(); // Recarrega cache
+  await carregarProvedores();
   return true;
 }
 
 async function definirPrincipal(id) {
-  await ProvedorIA.update({ isPrincipal: false }, { where: { isPrincipal: true } });
-  
-  const provedor = await ProvedorIA.findByPk(id);
+  const eid = getEmpresaId();
+  await ProvedorIA.update({ isPrincipal: false }, { where: { isPrincipal: true, empresaId: eid } });
+
+  const provedor = await getProvedorPorId(id);
   if (!provedor) throw new Error('Provedor não encontrado');
-  
+
   await provedor.update({ isPrincipal: true });
   await carregarProvedores();
   return provedor;
 }
 
 async function testarProvedor(id) {
-  const provedor = await ProvedorIA.findByPk(id);
+  const provedor = await getProvedorPorId(id);
   if (!provedor) throw new Error('Provedor não encontrado');
-  
+
   try {
     const start = Date.now();
     const resposta = await enviarParaIA(
@@ -181,7 +195,7 @@ async function testarProvedor(id) {
       provedor.nome
     );
     const tempo = Date.now() - start;
-    
+
     return {
       sucesso: true,
       resposta: resposta.substring(0, 100),

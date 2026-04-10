@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Configuração de IA - Pizzaria Bot</title>
+  <title>Configuração de IA - CS - Canivete Suíço</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
   <style>
@@ -176,11 +176,13 @@
   <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
     <div class="container-fluid">
       <a class="navbar-brand" href="dashboard.html">
-        <i class="bi bi-robot"></i> Pizzaria Bot
+        <i class="bi bi-robot"></i> CS - Canivete Suíço
       </a>
       <div class="navbar-nav ms-auto flex-row gap-3">
         <a class="nav-link" href="dashboard.html"><i class="bi bi-speedometer2"></i> Dashboard</a>
         <a class="nav-link" href="fluxos.html"><i class="bi bi-diagram-3"></i> Fluxos</a>
+        <a class="nav-link" href="automacoes.html"><i class="bi bi-gear-wide-connected"></i> Automações</a>
+        <a class="nav-link" href="integracoes-trello.html"><i class="bi bi-kanban"></i> Trello</a>
         <a class="nav-link active" href="ia-config.html"><i class="bi bi-cpu"></i> IA & Prompts</a>
       </div>
     </div>
@@ -336,7 +338,7 @@
           <div class="card-body">
             <div class="alert alert-info">
               <i class="bi bi-info-circle me-2"></i>
-              Arquivos JSON usados por requisições externas (ex: grupos_whatsapp, bordas, sabores_doces). Aqui você pode criar, editar e excluir arquivos, e definir <strong>como a IA deve processar</strong> o conteúdo e <strong>em que formato retornar</strong> o resultado.
+              Arquivos JSON <strong>por empresa</strong> (pasta <code>arquivos/empresas/&lt;id&gt;</code>), usados em requisições externas (ex: grupos_whatsapp, bordas). Crie, edite e defina <strong>como a IA processa</strong> o conteúdo e o <strong>formato de retorno</strong>. Nova empresa começa vazia; use <em>Clonar config</em> no admin para copiar arquivos de outra empresa.
             </div>
             <div class="table-responsive">
               <table class="table table-hover">
@@ -667,7 +669,7 @@ Use {{VARIAVEL}} para criar placeholders dinâmicos."></textarea>
               <div class="col-md-12 mb-3">
                 <label class="form-label">Nome do arquivo (sem .json)</label>
                 <input type="text" class="form-control" id="arquivoNome" required placeholder="ex: grupos_whatsapp" pattern="[a-zA-Z0-9_-]+">
-                <small class="text-muted">Apenas letras, números, _ e -. Será salvo como nome.json em /arquivos/</small>
+                <small class="text-muted">Apenas letras, números, _ e -. Salvo por empresa em <code>arquivos/empresas/&lt;id&gt;/nome.json</code></small>
               </div>
             </div>
             <div class="mb-3">
@@ -717,17 +719,24 @@ Use {{VARIAVEL}} para criar placeholders dinâmicos."></textarea>
     </div>
   </div>
 
+  <script src="/js/app-session.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    if (!window.PizzabotSession || !PizzabotSession.ensurePainel()) { throw new Error('auth'); }
     const API_BASE = '/api/ia';
 
     // Utilitários
     async function api(endpoint, options = {}) {
       try {
+        const headers = { ...PizzabotSession.authHeaders(), ...(options.headers || {}) };
         const response = await fetch(`${API_BASE}${endpoint}`, {
-          headers: { 'Content-Type': 'application/json' },
-          ...options
+          ...options,
+          headers
         });
+        if (response.status === 401) {
+          PizzabotSession.logout();
+          return { success: false, error: 'Sessão expirada' };
+        }
         return await response.json();
       } catch (error) {
         console.error('Erro na API:', error);

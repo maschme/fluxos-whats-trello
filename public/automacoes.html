@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Automações - Pizzaria Bot</title>
+  <title>Automações - CS - Canivete Suíço</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
   <style>
@@ -48,6 +48,11 @@
     .palette-node.log .icon { background: var(--node-log); }
     .palette-node.sleep .icon { background: var(--node-sleep); }
     .palette-node.end .icon { background: var(--node-end); }
+    .palette-node.trigger_trello .icon { background: #0079bf; }
+    .palette-node.trello_create_card .icon,
+    .palette-node.trello_move_card .icon,
+    .palette-node.trello_comment .icon,
+    .palette-node.trello_add_label .icon { background: #026aa7; }
     .flow-node { position: absolute; width: 220px; background: var(--bg-card); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; cursor: default; z-index: 10; }
     .flow-node.condition .handle.output-true { right: -7px; top: 35%; }
     .flow-node.condition .handle.output-false { right: -7px; top: 65%; }
@@ -79,7 +84,8 @@
     <a href="dashboard.html" class="brand"><i class="bi bi-robot"></i> Automações</a>
     <input type="text" class="flow-name" id="flowName" placeholder="Nome da automação">
     <div class="actions">
-      <button class="btn btn-sm btn-outline-warning" onclick="criarExemploWebhook()" title="Criar fluxo de exemplo acionado por POST"><i class="bi bi-file-earmark-plus"></i> Criar exemplo</button>
+      <button class="btn btn-sm btn-outline-warning" onclick="criarExemploWebhook()" title="Criar fluxo de exemplo acionado por POST"><i class="bi bi-file-earmark-plus"></i> Exemplo webhook</button>
+      <button class="btn btn-sm btn-outline-info" onclick="criarExemploTrello()" title="Gatilho Trello + log"><i class="bi bi-kanban"></i> Exemplo Trello</button>
       <button class="btn btn-sm btn-outline-light" onclick="exportarAutomacaoArquivo()" title="Baixar JSON da automação"><i class="bi bi-download"></i> Exportar</button>
       <button class="btn btn-sm btn-outline-light" onclick="document.getElementById('importAutomacaoFile').click()" title="Importar .json"><i class="bi bi-upload"></i> Importar</button>
       <input type="file" id="importAutomacaoFile" accept=".json,application/json" style="display:none" />
@@ -87,6 +93,7 @@
       <button class="btn btn-sm btn-outline-info" onclick="executarAgora()" id="btnExecutar" title="Executar uma vez"><i class="bi bi-play-fill"></i> Executar</button>
       <button class="btn btn-sm btn-outline-success" onclick="toggleAtivar()" id="btnAtivar"><i class="bi bi-play"></i> Ativar</button>
       <a href="fluxos.html" class="btn btn-sm btn-outline-light"><i class="bi bi-diagram-3"></i> Fluxos</a>
+      <a href="integracoes-trello.html" class="btn btn-sm btn-outline-info" title="Credenciais e webhook Trello"><i class="bi bi-kanban"></i> Trello</a>
     </div>
   </div>
 
@@ -100,6 +107,10 @@
       <div class="palette-node trigger_schedule" draggable="true" data-type="trigger_schedule">
         <div class="icon"><i class="bi bi-clock"></i></div>
         <div class="info"><div class="name">Agendamento</div><div class="desc">Cron / manual</div></div>
+      </div>
+      <div class="palette-node trigger_trello" draggable="true" data-type="trigger_trello">
+        <div class="icon"><i class="bi bi-kanban"></i></div>
+        <div class="info"><div class="name">Gatilho Trello</div><div class="desc">Evento do quadro (webhook)</div></div>
       </div>
     </div>
     <h6>Lógica e Dados</h6>
@@ -127,6 +138,22 @@
         <div class="icon"><i class="bi bi-cpu-fill"></i></div>
         <div class="info"><div class="name">IA / LLM</div><div class="desc">Processar com IA</div></div>
       </div>
+      <div class="palette-node trello_create_card" draggable="true" data-type="trello_create_card">
+        <div class="icon"><i class="bi bi-plus-square"></i></div>
+        <div class="info"><div class="name">Trello: criar card</div><div class="desc">Novo card em lista</div></div>
+      </div>
+      <div class="palette-node trello_move_card" draggable="true" data-type="trello_move_card">
+        <div class="icon"><i class="bi bi-arrows-move"></i></div>
+        <div class="info"><div class="name">Trello: mover card</div><div class="desc">Mudar lista</div></div>
+      </div>
+      <div class="palette-node trello_comment" draggable="true" data-type="trello_comment">
+        <div class="icon"><i class="bi bi-chat-left-text"></i></div>
+        <div class="info"><div class="name">Trello: comentário</div><div class="desc">Comentar no card</div></div>
+      </div>
+      <div class="palette-node trello_add_label" draggable="true" data-type="trello_add_label">
+        <div class="icon"><i class="bi bi-tag-fill"></i></div>
+        <div class="info"><div class="name">Trello: label</div><div class="desc">Adicionar etiqueta</div></div>
+      </div>
     </div>
     <h6>Utilitários</h6>
     <div class="node-palette">
@@ -149,6 +176,11 @@
       <strong>Webhook (POST):</strong><br>
       <code id="webhookUrlText" style="font-size:0.7rem; word-break: break-all;">Salve e ative para ver a URL</code>
     </div>
+    <div class="mt-2 p-2 rounded small" style="background: rgba(0,121,191,0.12); border: 1px solid rgba(0,121,191,0.35);">
+      <strong>Trello:</strong> configure credenciais e webhook em
+      <a href="integracoes-trello.html" class="link-info">Integrações Trello</a>.
+      Use o nó <em>Gatilho Trello</em> nesta automação. Variáveis úteis: <code>{{trelloCardId}}</code>, <code>{{trelloActionType}}</code>.
+    </div>
   </div>
 
   <div class="canvas-container" id="canvasContainer">
@@ -163,8 +195,10 @@
   <div class="zoom-controls"><button onclick="zoomOut()"><i class="bi bi-dash"></i></button><span id="zoomLevel">100%</span><button onclick="zoomIn()"><i class="bi bi-plus"></i></button><button onclick="resetView()"><i class="bi bi-fullscreen"></i></button></div>
   <div class="toast-container" id="toastContainer"></div>
 
+  <script src="/js/app-session.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    if (!window.PizzabotSession || !PizzabotSession.ensurePainel()) { throw new Error('auth'); }
     let currentFluxoId = null, currentFluxoAtivo = false, nodes = [], edges = [], selectedNodeId = null, nodeIdCounter = 1;
     let viewport = { x: 100, y: 100, zoom: 1 }, isPanning = false, isDraggingNode = false, isConnecting = false;
     let draggedNode = null, dragOffset = { x: 0, y: 0 }, connectionStart = null, tempConnectionLine = null;
@@ -173,6 +207,7 @@
     const nodeTemplates = {
       trigger_webhook: { icon: 'bi-link-45deg', title: 'Webhook', hasInput: false, hasOutput: true, defaultData: { variavelPayload: 'payload' } },
       trigger_schedule: { icon: 'bi-clock', title: 'Agendamento', hasInput: false, hasOutput: true, defaultData: {} },
+      trigger_trello: { icon: 'bi-kanban', title: 'Gatilho Trello', hasInput: false, hasOutput: true, defaultData: { variavelPayload: 'trello', boardId: '', filtroTipoAcao: '*', listIdDestino: '' } },
       condition: { icon: 'bi-diagram-3', title: 'Condição', hasInput: true, hasOutput: false, hasOutputTrue: true, hasOutputFalse: true, defaultData: { variavelNome: 'valor', operador: 'igual', valorComparacao: '' } },
       set_variable: { icon: 'bi-tag', title: 'Definir variável', hasInput: true, hasOutput: true, defaultData: { nomeVariavel: 'var', valor: '' } },
       http_request: { icon: 'bi-globe', title: 'HTTP', hasInput: true, hasOutput: true, defaultData: { method: 'GET', url: '', variavelSaida: 'response', timeout: 30 } },
@@ -180,7 +215,11 @@
       merge: { icon: 'bi-arrow-merge', title: 'Merge', hasInput: true, hasOutput: true, defaultData: {} },
       log: { icon: 'bi-journal-text', title: 'Log', hasInput: true, hasOutput: true, defaultData: { mensagem: 'Log', nivel: 'info' } },
       sleep: { icon: 'bi-hourglass-split', title: 'Atraso', hasInput: true, hasOutput: true, defaultData: { segundos: 5 } },
-      end: { icon: 'bi-stop-circle-fill', title: 'Fim', hasInput: true, hasOutput: false, defaultData: {} }
+      end: { icon: 'bi-stop-circle-fill', title: 'Fim', hasInput: true, hasOutput: false, defaultData: {} },
+      trello_create_card: { icon: 'bi-plus-square', title: 'Trello · Criar card', hasInput: true, hasOutput: true, defaultData: { listId: '', nome: '', descricao: '', variavelSaida: 'trelloCard', onError: 'continue' } },
+      trello_move_card: { icon: 'bi-arrows-move', title: 'Trello · Mover', hasInput: true, hasOutput: true, defaultData: { cardId: '{{trelloCardId}}', listId: '', variavelSaida: 'trelloMove', onError: 'continue' } },
+      trello_comment: { icon: 'bi-chat-left-text', title: 'Trello · Comentário', hasInput: true, hasOutput: true, defaultData: { cardId: '{{trelloCardId}}', texto: '', variavelSaida: 'trelloComment', onError: 'continue' } },
+      trello_add_label: { icon: 'bi-tag-fill', title: 'Trello · Label', hasInput: true, hasOutput: true, defaultData: { cardId: '{{trelloCardId}}', labelId: '', variavelSaida: 'trelloLabel', onError: 'continue' } }
     };
 
     function generateNodeId() { return 'node_' + (nodeIdCounter++); }
@@ -215,6 +254,11 @@
       let preview = '';
       if (node.type === 'trigger_webhook') preview = 'POST → {{' + (node.data.variavelPayload || 'payload') + '}}';
       else if (node.type === 'trigger_schedule') preview = 'Agendamento / manual';
+      else if (node.type === 'trigger_trello') preview = (node.data.filtroTipoAcao || '*') + (node.data.listIdDestino ? ' → lista…' : '');
+      else if (node.type === 'trello_create_card') preview = (node.data.nome || 'card').substring(0, 28);
+      else if (node.type === 'trello_move_card') preview = '→ lista ' + (node.data.listId || '').substring(0, 20);
+      else if (node.type === 'trello_comment') preview = (node.data.texto || '').substring(0, 35);
+      else if (node.type === 'trello_add_label') preview = 'label ' + (node.data.labelId || '').substring(0, 24);
       else if (node.type === 'condition') preview = '{{' + (node.data.variavelNome || 'valor') + '}} ' + (node.data.operador || 'igual') + ' "' + (node.data.valorComparacao || '') + '"';
       else if (node.type === 'set_variable') preview = (node.data.nomeVariavel || 'var') + ' = ' + (String(node.data.valor || '').substring(0, 30));
       else if (node.type === 'http_request') preview = (node.data.method || 'GET') + ' ' + (node.data.url || '').substring(0, 40);
@@ -251,6 +295,13 @@
         case 'trigger_webhook':
           html += '<div class="form-group"><label>Salvar body em variável</label><input type="text" value="' + (d.variavelPayload || 'payload') + '" onchange="updateNodeData(\'variavelPayload\', this.value)" placeholder="payload"></div>';
           break;
+        case 'trigger_trello':
+          html += '<div class="form-group"><label>Variável com payload completo</label><input type="text" value="' + (d.variavelPayload || 'trello') + '" onchange="updateNodeData(\'variavelPayload\', this.value)"></div>';
+          html += '<div class="form-group"><label>ID do quadro (vazio = qualquer)</label><input type="text" value="' + (d.boardId || '') + '" onchange="updateNodeData(\'boardId\', this.value)" placeholder="Opcional"></div>';
+          html += '<div class="form-group"><label>Tipo de ação Trello</label><input type="text" value="' + (d.filtroTipoAcao || '*') + '" onchange="updateNodeData(\'filtroTipoAcao\', this.value)" placeholder="* ou updateCard, createCard…"></div>';
+          html += '<div class="form-group"><label>ID lista destino (só movimentação/criação)</label><input type="text" value="' + (d.listIdDestino || '') + '" onchange="updateNodeData(\'listIdDestino\', this.value)" placeholder="Vazio = qualquer lista"></div>';
+          html += '<p class="small text-secondary">Registre o webhook em Integrações Trello. <code>updateCard</code> com lista preenchida = card movido para essa lista.</p>';
+          break;
         case 'condition':
           html += '<div class="form-group"><label>Variável</label><input type="text" value="' + (d.variavelNome || 'valor') + '" onchange="updateNodeData(\'variavelNome\', this.value)"></div><div class="form-group"><label>Operador</label><select onchange="updateNodeData(\'operador\', this.value)"><option value="igual"' + (d.operador==='igual'?' selected':'') + '>Igual</option><option value="diferente"' + (d.operador==='diferente'?' selected':'') + '>Diferente</option><option value="contem"' + (d.operador==='contem'?' selected':'') + '>Contém</option><option value="maior"' + (d.operador==='maior'?' selected':'') + '>Maior</option><option value="menor"' + (d.operador==='menor'?' selected':'') + '>Menor</option></select></div><div class="form-group"><label>Valor</label><input type="text" value="' + (d.valorComparacao || '') + '" onchange="updateNodeData(\'valorComparacao\', this.value)"></div>';
           break;
@@ -268,6 +319,31 @@
           break;
         case 'sleep':
           html += '<div class="form-group"><label>Atraso (segundos)</label><input type="number" value="' + (d.segundos || 5) + '" onchange="updateNodeData(\'segundos\', parseInt(this.value))" min="0" max="600"></div>';
+          break;
+        case 'trello_create_card':
+          html += '<div class="form-group"><label>ID da lista</label><input type="text" value="' + (d.listId || '') + '" onchange="updateNodeData(\'listId\', this.value)" placeholder="{{variavel}} ou ID fixo"></div>';
+          html += '<div class="form-group"><label>Nome do card</label><input type="text" value="' + (d.nome || d.name || '') + '" onchange="updateNodeData(\'nome\', this.value)"></div>';
+          html += '<div class="form-group"><label>Descrição</label><textarea onchange="updateNodeData(\'descricao\', this.value)" rows="2">' + (d.descricao || d.desc || '') + '</textarea></div>';
+          html += '<div class="form-group"><label>Variável saída</label><input type="text" value="' + (d.variavelSaida || 'trelloCard') + '" onchange="updateNodeData(\'variavelSaida\', this.value)"></div>';
+          html += '<div class="form-group"><label>Se erro</label><select onchange="updateNodeData(\'onError\', this.value)"><option value="continue"' + (d.onError !== 'stop' ? ' selected' : '') + '>Continuar</option><option value="stop"' + (d.onError === 'stop' ? ' selected' : '') + '>Parar</option></select></div>';
+          break;
+        case 'trello_move_card':
+          html += '<div class="form-group"><label>ID do card</label><input type="text" value="' + (d.cardId || '') + '" onchange="updateNodeData(\'cardId\', this.value)" placeholder="{{trelloCardId}}"></div>';
+          html += '<div class="form-group"><label>ID da lista destino</label><input type="text" value="' + (d.listId || '') + '" onchange="updateNodeData(\'listId\', this.value)"></div>';
+          html += '<div class="form-group"><label>Variável saída</label><input type="text" value="' + (d.variavelSaida || 'trelloMove') + '" onchange="updateNodeData(\'variavelSaida\', this.value)"></div>';
+          html += '<div class="form-group"><label>Se erro</label><select onchange="updateNodeData(\'onError\', this.value)"><option value="continue"' + (d.onError !== 'stop' ? ' selected' : '') + '>Continuar</option><option value="stop"' + (d.onError === 'stop' ? ' selected' : '') + '>Parar</option></select></div>';
+          break;
+        case 'trello_comment':
+          html += '<div class="form-group"><label>ID do card</label><input type="text" value="' + (d.cardId || '') + '" onchange="updateNodeData(\'cardId\', this.value)"></div>';
+          html += '<div class="form-group"><label>Texto</label><textarea onchange="updateNodeData(\'texto\', this.value)" rows="2">' + (d.texto || d.text || '') + '</textarea></div>';
+          html += '<div class="form-group"><label>Variável saída</label><input type="text" value="' + (d.variavelSaida || 'trelloComment') + '" onchange="updateNodeData(\'variavelSaida\', this.value)"></div>';
+          html += '<div class="form-group"><label>Se erro</label><select onchange="updateNodeData(\'onError\', this.value)"><option value="continue"' + (d.onError !== 'stop' ? ' selected' : '') + '>Continuar</option><option value="stop"' + (d.onError === 'stop' ? ' selected' : '') + '>Parar</option></select></div>';
+          break;
+        case 'trello_add_label':
+          html += '<div class="form-group"><label>ID do card</label><input type="text" value="' + (d.cardId || '') + '" onchange="updateNodeData(\'cardId\', this.value)"></div>';
+          html += '<div class="form-group"><label>ID da label (etiqueta)</label><input type="text" value="' + (d.labelId || '') + '" onchange="updateNodeData(\'labelId\', this.value)" placeholder="ID da API Trello"></div>';
+          html += '<div class="form-group"><label>Variável saída</label><input type="text" value="' + (d.variavelSaida || 'trelloLabel') + '" onchange="updateNodeData(\'variavelSaida\', this.value)"></div>';
+          html += '<div class="form-group"><label>Se erro</label><select onchange="updateNodeData(\'onError\', this.value)"><option value="continue"' + (d.onError !== 'stop' ? ' selected' : '') + '>Continuar</option><option value="stop"' + (d.onError === 'stop' ? ' selected' : '') + '>Parar</option></select></div>';
           break;
       }
       panel.innerHTML = html;
@@ -310,8 +386,13 @@
     function resetView() { viewport = { x: 100, y: 100, zoom: 1 }; updateCanvasTransform(); }
 
     async function api(endpoint, opts) {
-      try { const r = await fetch('/api/fluxos' + endpoint, { headers: { 'Content-Type': 'application/json' }, ...opts }); return await r.json(); }
-      catch (e) { console.error(e); return { success: false, error: e.message }; }
+      try {
+        const o = opts || {};
+        const headers = { ...PizzabotSession.authHeaders(), ...(o.headers || {}) };
+        const r = await fetch('/api/fluxos' + endpoint, { ...o, headers });
+        if (r.status === 401) { PizzabotSession.logout(); return { success: false, error: 'Sessão expirada' }; }
+        return await r.json();
+      } catch (e) { console.error(e); return { success: false, error: e.message }; }
     }
     function toastAuto(msg, cls) {
       const c = document.getElementById('toastContainer');
@@ -460,6 +541,35 @@
       document.getElementById('btnAtivar').innerHTML = '<i class="bi bi-play"></i> Ativar';
       document.getElementById('toastContainer').innerHTML += '<div class="toast show bg-success text-white mb-2"><div class="toast-body">Exemplo criado! Salve e ative. Dispare com: POST /api/fluxos/{id}/webhook</div></div>';
       setTimeout(() => document.querySelector('#toastContainer .toast')?.remove(), 5000);
+    }
+
+    function criarExemploTrello() {
+      if (nodes.length > 0 && !confirm('Isso vai substituir o fluxo atual. Continuar?')) return;
+      nodeIdCounter = 1;
+      const n1 = { id: 'node_1', type: 'trigger_trello', x: 50, y: 200, data: { variavelPayload: 'trello', boardId: '', filtroTipoAcao: 'updateCard', listIdDestino: '' } };
+      const n2 = { id: 'node_2', type: 'log', x: 320, y: 200, data: { mensagem: 'Trello {{trelloActionType}} card={{trelloCardId}}', nivel: 'info' } };
+      const n3 = { id: 'node_3', type: 'end', x: 590, y: 200, data: {} };
+      nodes = [n1, n2, n3];
+      edges = [
+        { id: 'e1', source: 'node_1', target: 'node_2', sourceHandle: 'output' },
+        { id: 'e2', source: 'node_2', target: 'node_3', sourceHandle: 'output' }
+      ];
+      nodeIdCounter = 10;
+      currentFluxoId = null;
+      currentFluxoAtivo = false;
+      document.getElementById('flowName').value = 'Exemplo Gatilho Trello';
+      document.querySelectorAll('.flow-node').forEach(el => el.remove());
+      svg.querySelectorAll('.connection-path').forEach(p => p.remove());
+      nodes.forEach(n => renderNode(n));
+      renderConnections();
+      selectedNodeId = null;
+      renderPropertiesPanel();
+      updateCanvasTransform();
+      resetView();
+      carregarLista();
+      document.getElementById('btnAtivar').innerHTML = '<i class="bi bi-play"></i> Ativar';
+      document.getElementById('toastContainer').innerHTML += '<div class="toast show bg-info text-dark mb-2"><div class="toast-body">Registre o webhook em Integrações Trello e ajuste lista/quadro no nó Gatilho.</div></div>';
+      setTimeout(() => document.querySelector('#toastContainer .toast')?.remove(), 6000);
     }
 
     document.addEventListener('DOMContentLoaded', function() {

@@ -1,25 +1,34 @@
 const { Gatilho } = require('../Models/GatilhoModel');
+const { getEmpresaId } = require('../context/tenantContext');
 
-// Cache em memória
-let cacheGatilhos = null;
-let cacheTimestamp = null;
-const CACHE_TTL = 60000; // 1 minuto
+const CACHE_TTL = 60000;
+const cacheByEmpresa = new Map();
+
+function getBucket() {
+  const eid = getEmpresaId();
+  if (!cacheByEmpresa.has(eid)) {
+    cacheByEmpresa.set(eid, { cacheGatilhos: null, cacheTimestamp: null });
+  }
+  return cacheByEmpresa.get(eid);
+}
 
 async function carregarGatilhos() {
   const agora = Date.now();
+  const bucket = getBucket();
+  const eid = getEmpresaId();
 
-  if (cacheGatilhos && cacheTimestamp && (agora - cacheTimestamp) < CACHE_TTL) {
-    return cacheGatilhos;
+  if (bucket.cacheGatilhos && bucket.cacheTimestamp && (agora - bucket.cacheTimestamp) < CACHE_TTL) {
+    return bucket.cacheGatilhos;
   }
 
-  cacheGatilhos = await Gatilho.findAll({
-    where: { ativo: true },
+  bucket.cacheGatilhos = await Gatilho.findAll({
+    where: { ativo: true, empresaId: eid },
     order: [['prioridade', 'DESC']]
   });
 
-  cacheTimestamp = agora;
-  console.log(`📦 ${cacheGatilhos.length} gatilhos carregados do banco`);
-  return cacheGatilhos;
+  bucket.cacheTimestamp = agora;
+  console.log(`📦 ${bucket.cacheGatilhos.length} gatilhos carregados (empresa ${eid})`);
+  return bucket.cacheGatilhos;
 }
 
 async function verificarGatilho(texto) {
@@ -27,7 +36,6 @@ async function verificarGatilho(texto) {
   const textoLower = texto.toLowerCase().trim();
 
   for (const gatilho of gatilhos) {
-    // Verifica mensagem exata primeiro (maior prioridade)
     if (gatilho.mensagemExata && texto.trim() === gatilho.mensagemExata) {
       return {
         tipo: gatilho.nome,
@@ -40,11 +48,8 @@ async function verificarGatilho(texto) {
       };
     }
 
-    // Verifica palavras-chave
     const palavrasChave = gatilho.palavrasChave || [];
-    const encontrou = palavrasChave.some(palavra =>
-      textoLower.includes(palavra.toLowerCase())
-    );
+    const encontrou = palavrasChave.some((palavra) => textoLower.includes(palavra.toLowerCase()));
 
     if (encontrou) {
       return {
@@ -63,19 +68,23 @@ async function verificarGatilho(texto) {
 }
 
 async function listarGatilhos() {
-  return await Gatilho.findAll({
+  const eid = getEmpresaId();
+  return Gatilho.findAll({
+    where: { empresaId: eid },
     order: [['prioridade', 'DESC'], ['nome', 'ASC']]
   });
 }
 
 async function criarGatilho(dados) {
-  const gatilho = await Gatilho.create(dados);
+  const eid = getEmpresaId();
+  const gatilho = await Gatilho.create({ ...dados, empresaId: eid });
   invalidarCache();
   return gatilho;
 }
 
 async function atualizarGatilho(id, dados) {
-  const gatilho = await Gatilho.findByPk(id);
+  const eid = getEmpresaId();
+  const gatilho = await Gatilho.findOne({ where: { id, empresaId: eid } });
 
   if (!gatilho) {
     throw new Error(`Gatilho ${id} não encontrado`);
@@ -87,15 +96,16 @@ async function atualizarGatilho(id, dados) {
 }
 
 async function ativarGatilho(id) {
-  return await atualizarGatilho(id, { ativo: true });
+  return atualizarGatilho(id, { ativo: true });
 }
 
 async function desativarGatilho(id) {
-  return await atualizarGatilho(id, { ativo: false });
+  return atualizarGatilho(id, { ativo: false });
 }
 
 async function deletarGatilho(id) {
-  const gatilho = await Gatilho.findByPk(id);
+  const eid = getEmpresaId();
+  const gatilho = await Gatilho.findOne({ where: { id, empresaId: eid } });
 
   if (!gatilho) {
     throw new Error(`Gatilho ${id} não encontrado`);
@@ -107,8 +117,9 @@ async function deletarGatilho(id) {
 }
 
 function invalidarCache() {
-  cacheTimestamp = null;
-  cacheGatilhos = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
+  bucket.cacheGatilhos = null;
 }
 
 module.exports = {

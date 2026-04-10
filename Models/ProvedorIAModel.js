@@ -7,10 +7,15 @@ const ProvedorIA = sequelize.define('ProvedorIA', {
     primaryKey: true,
     autoIncrement: true
   },
+  empresaId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    references: { model: 'empresas', key: 'id' }
+  },
   nome: {
     type: DataTypes.STRING(100),
-    allowNull: false,
-    unique: true
+    allowNull: false
   },
   descricao: {
     type: DataTypes.STRING(500),
@@ -64,7 +69,10 @@ const ProvedorIA = sequelize.define('ProvedorIA', {
   }
 }, {
   tableName: 'provedores_ia',
-  timestamps: true
+  timestamps: true,
+  indexes: [
+    { unique: true, fields: ['empresaId', 'nome'], name: 'uniq_provedor_empresa_nome' }
+  ]
 });
 
 module.exports = { ProvedorIA };

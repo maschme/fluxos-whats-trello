@@ -7,10 +7,15 @@ const GrupoWhatsapp = sequelize.define('GrupoWhatsapp', {
     primaryKey: true,
     autoIncrement: true
   },
+  empresaId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    references: { model: 'empresas', key: 'id' }
+  },
   grupoId: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    unique: true,
     comment: 'ID do grupo no WhatsApp (ex: 120363xxx@g.us)'
   },
   nome: {
@@ -54,7 +59,10 @@ const GrupoWhatsapp = sequelize.define('GrupoWhatsapp', {
   }
 }, {
   tableName: 'grupos_whatsapp',
-  timestamps: true
+  timestamps: true,
+  indexes: [
+    { unique: true, fields: ['empresaId', 'grupoId'], name: 'uniq_grupo_empresa_grupoId' }
+  ]
 });
 
 module.exports = { GrupoWhatsapp, sequelize };

@@ -242,7 +242,7 @@ router.post('/requisicoes/executar', async (req, res) => {
 
 router.get('/arquivos', async (req, res) => {
   try {
-    const arquivos = arquivoService.listar();
+    const arquivos = arquivoService.listar(req.empresaId);
     res.json({ success: true, total: arquivos.length, data: arquivos });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -252,8 +252,8 @@ router.get('/arquivos', async (req, res) => {
 router.get('/arquivos/:nome', async (req, res) => {
   try {
     const nome = decodeURIComponent(req.params.nome);
-    const conteudo = arquivoService.getConteudoRaw(nome);
-    const meta = arquivoService.getMeta(nome);
+    const conteudo = arquivoService.getConteudoRaw(nome, req.empresaId);
+    const meta = arquivoService.getMeta(nome, req.empresaId);
     if (conteudo === null) {
       return res.status(404).json({ success: false, error: 'Arquivo não encontrado' });
     }
@@ -272,7 +272,7 @@ router.post('/arquivos', async (req, res) => {
     const meta = {};
     if (instrucaoProcessamento !== undefined) meta.instrucaoProcessamento = instrucaoProcessamento;
     if (formatoRetorno !== undefined) meta.formatoRetorno = formatoRetorno;
-    const result = arquivoService.criar(nome.trim(), conteudo || '{}', meta);
+    const result = arquivoService.criar(nome.trim(), conteudo || '{}', meta, req.empresaId);
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -286,7 +286,7 @@ router.put('/arquivos/:nome', async (req, res) => {
     const meta = (instrucaoProcessamento !== undefined || formatoRetorno !== undefined)
       ? { instrucaoProcessamento, formatoRetorno }
       : null;
-    const result = arquivoService.atualizar(nome, conteudo, meta);
+    const result = arquivoService.atualizar(nome, conteudo, meta, req.empresaId);
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -297,7 +297,7 @@ router.put('/arquivos/:nome/meta', async (req, res) => {
   try {
     const nome = decodeURIComponent(req.params.nome);
     const { instrucaoProcessamento, formatoRetorno } = req.body;
-    const result = arquivoService.atualizarMeta(nome, { instrucaoProcessamento, formatoRetorno });
+    const result = arquivoService.atualizarMeta(nome, { instrucaoProcessamento, formatoRetorno }, req.empresaId);
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -307,7 +307,7 @@ router.put('/arquivos/:nome/meta', async (req, res) => {
 router.delete('/arquivos/:nome', async (req, res) => {
   try {
     const nome = decodeURIComponent(req.params.nome);
-    arquivoService.deletar(nome);
+    arquivoService.deletar(nome, req.empresaId);
     res.json({ success: true, message: 'Arquivo deletado' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

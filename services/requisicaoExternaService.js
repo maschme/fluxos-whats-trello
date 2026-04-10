@@ -4,29 +4,39 @@ const provedorService = require('./provedorIAService');
 const arquivoService = require('./arquivoService');
 const axios = require('axios');
 const { lerJson } = require('../utils/lerJson');
+const { getEmpresaId } = require('../context/tenantContext');
 
-// Cache
-let cacheRequisicoes = {};
-let cacheTimestamp = null;
 const CACHE_TTL = 60000;
+const cacheByEmpresa = new Map();
+
+function getBucket() {
+  const eid = getEmpresaId();
+  if (!cacheByEmpresa.has(eid)) {
+    cacheByEmpresa.set(eid, { cacheRequisicoes: {}, cacheTimestamp: null });
+  }
+  return cacheByEmpresa.get(eid);
+}
 
 async function carregarRequisicoes() {
-  const requisicoes = await RequisicaoExterna.findAll({ where: { ativo: true } });
-  cacheRequisicoes = {};
-  requisicoes.forEach(r => {
-    cacheRequisicoes[r.tipo] = r;
+  const eid = getEmpresaId();
+  const requisicoes = await RequisicaoExterna.findAll({ where: { ativo: true, empresaId: eid } });
+  const bucket = getBucket();
+  bucket.cacheRequisicoes = {};
+  requisicoes.forEach((r) => {
+    bucket.cacheRequisicoes[r.tipo] = r;
   });
-  cacheTimestamp = Date.now();
-  console.log(`📡 ${requisicoes.length} tipos de requisições externas carregados`);
-  return cacheRequisicoes;
+  bucket.cacheTimestamp = Date.now();
+  console.log(`📡 ${requisicoes.length} requisições externas carregadas (empresa ${eid})`);
+  return bucket.cacheRequisicoes;
 }
 
 async function getRequisicao(tipo) {
   const agora = Date.now();
-  if (!cacheTimestamp || (agora - cacheTimestamp) > CACHE_TTL) {
+  const bucket = getBucket();
+  if (!bucket.cacheTimestamp || (agora - bucket.cacheTimestamp) > CACHE_TTL) {
     await carregarRequisicoes();
   }
-  return cacheRequisicoes[tipo];
+  return bucket.cacheRequisicoes[tipo];
 }
 
 async function executarRequisicao(tipo, detalhes, contexto = {}) {
@@ -202,47 +212,54 @@ async function executarRequisicaoFuncao(requisicao, detalhes, contexto) {
 }
 
 async function listarRequisicoes(filtros = {}) {
-  const where = {};
+  const eid = getEmpresaId();
+  const where = { empresaId: eid };
   if (filtros.ativo !== undefined) where.ativo = filtros.ativo;
   if (filtros.tipoHandler) where.tipoHandler = filtros.tipoHandler;
-  
-  return await RequisicaoExterna.findAll({
+
+  return RequisicaoExterna.findAll({
     where,
     order: [['tipo', 'ASC']]
   });
 }
 
 async function getRequisicaoPorId(id) {
-  return await RequisicaoExterna.findByPk(id);
+  const eid = getEmpresaId();
+  return RequisicaoExterna.findOne({ where: { id, empresaId: eid } });
 }
 
 async function criarRequisicao(dados) {
-  const requisicao = await RequisicaoExterna.create(dados);
-  cacheTimestamp = null;
+  const eid = getEmpresaId();
+  const requisicao = await RequisicaoExterna.create({ ...dados, empresaId: eid });
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return requisicao;
 }
 
 async function atualizarRequisicao(id, dados) {
-  const requisicao = await RequisicaoExterna.findByPk(id);
+  const requisicao = await getRequisicaoPorId(id);
   if (!requisicao) throw new Error('Requisição não encontrada');
-  
+
   await requisicao.update(dados);
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return requisicao;
 }
 
 async function deletarRequisicao(id) {
-  const requisicao = await RequisicaoExterna.findByPk(id);
+  const requisicao = await getRequisicaoPorId(id);
   if (!requisicao) throw new Error('Requisição não encontrada');
-  
+
   await requisicao.destroy();
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return true;
 }
 
 function invalidarCache() {
-  cacheTimestamp = null;
-  cacheRequisicoes = {};
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
+  bucket.cacheRequisicoes = {};
 }
 
 module.exports = {

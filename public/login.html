@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - CS - Canivete Suíço</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { min-height: 100vh; background: #0f0f14; color: #f0f0f5; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+    .card-login { max-width: 420px; width: 100%; background: #16161d; border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 2rem; }
+    .brand { color: #e63946; font-weight: 700; font-size: 1.35rem; margin-bottom: 0.25rem; }
+    .sub { color: #9898a6; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .form-control { background: #1c1c26; border: 1px solid rgba(255,255,255,0.1); color: #f0f0f5; }
+    .form-control:focus { background: #1c1c26; border-color: #e63946; color: #fff; box-shadow: 0 0 0 2px rgba(230,57,70,0.2); }
+    .btn-login { background: #e63946; border: none; font-weight: 600; padding: 0.65rem; }
+    .btn-login:hover { background: #c1121f; }
+    .alert { font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="card-login">
+    <div class="brand">CS - Canivete Suíço</div>
+    <div class="sub">Acesse o painel da sua empresa</div>
+    <div id="alertBox"></div>
+    <form id="formLogin">
+      <div class="mb-3">
+        <label class="form-label">E-mail</label>
+        <input type="email" class="form-control" name="email" required autocomplete="username">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Senha</label>
+        <input type="password" class="form-control" name="password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-danger btn-login w-100" id="btnSubmit">Entrar</button>
+    </form>
+  </div>
+  <script src="/js/app-session.js"></script>
+  <script>
+    document.getElementById('formLogin').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const email = fd.get('email');
+      const password = fd.get('password');
+      const box = document.getElementById('alertBox');
+      const btn = document.getElementById('btnSubmit');
+      box.innerHTML = '';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (!data.success) {
+          box.innerHTML = '<div class="alert alert-danger">' + (data.error || 'Falha no login') + '</div>';
+          btn.disabled = false;
+          return;
+        }
+        PizzabotSession.clearSession();
+        PizzabotSession.setSession(data.token, data.user);
+        if (data.user.role === 'super_admin') {
+          window.location.href = '/admin.html';
+        } else {
+          window.location.href = '/dashboard.html';
+        }
+      } catch (err) {
+        box.innerHTML = '<div class="alert alert-danger">Erro de conexão</div>';
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin - CS - Canivete Suíço</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { background: #0f0f14; color: #f0f0f5; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; min-height: 100vh; padding: 1.5rem; }
+    .card-dark { background: #16161d; border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; }
+    .form-control, .form-select { background: #1c1c26; border-color: rgba(255,255,255,0.1); color: #f0f0f5; }
+    .form-control:focus { background: #1c1c26; color: #fff; border-color: #e63946; box-shadow: 0 0 0 2px rgba(230,57,70,0.2); }
+    h1 { font-size: 1.35rem; color: #e63946; }
+    .table { color: #e8e8ef; }
+    .table td, .table th { border-color: rgba(255,255,255,0.08); vertical-align: middle; }
+    a { color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <div class="container" style="max-width: 960px;">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h1 class="mb-0">Super admin · Empresas (CS - Canivete Suíço)</h1>
+      <div>
+        <a href="/dashboard.html" class="btn btn-outline-light btn-sm me-2">Painel (com empresa selecionada)</a>
+        <button type="button" class="btn btn-outline-danger btn-sm" id="btnSair">Sair</button>
+      </div>
+    </div>
+    <div id="msg"></div>
+
+    <div class="card card-dark p-4 mb-4">
+      <h2 class="h5 mb-3">Nova empresa + administrador</h2>
+      <form id="formNova" class="row g-2">
+        <div class="col-md-6"><input class="form-control" name="nome" placeholder="Nome da empresa" required></div>
+        <div class="col-md-6"><input class="form-control" name="slug" placeholder="Slug (opcional)"></div>
+        <div class="col-md-6"><input class="form-control" name="adminEmail" type="email" placeholder="E-mail do admin" required></div>
+        <div class="col-md-6"><input class="form-control" name="adminPassword" type="password" placeholder="Senha do admin" required></div>
+        <div class="col-12"><input class="form-control" name="adminNome" placeholder="Nome de exibição (opcional)"></div>
+        <div class="col-12"><button class="btn btn-danger" type="submit">Criar</button></div>
+      </form>
+    </div>
+
+    <div class="card card-dark p-4">
+      <h2 class="h5 mb-3">Empresas cadastradas</h2>
+      <p class="small text-secondary">Para abrir o dashboard como super admin, escolha a empresa e clique em &quot;Usar no painel&quot; (envia o header <code>X-Empresa-Id</code>).</p>
+      <div class="table-responsive">
+        <table class="table table-sm">
+          <thead><tr><th>ID</th><th>Nome</th><th>Slug</th><th>Ativa</th><th>Ações</th></tr></thead>
+          <tbody id="tbodyEmpresas"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script src="/js/app-session.js"></script>
+  <script>
+    if (!PizzabotSession.ensureAdmin()) throw new Error('auth');
+
+    const msg = (t, ok) => {
+      document.getElementById('msg').innerHTML = '<div class="alert alert-' + (ok ? 'success' : 'danger') + '">' + t + '</div>';
+    };
+
+    async function api(path, opts) {
+      const r = await fetch('/api/admin' + path, {
+        ...opts,
+        headers: { ...PizzabotSession.authHeaders(), ...(opts && opts.headers) }
+      });
+      if (r.status === 401) { PizzabotSession.logout(); return null; }
+      return r.json();
+    }
+
+    async function carregar() {
+      const data = await api('/empresas');
+      if (!data || !data.success) { msg(data && data.error || 'Erro ao listar', false); return; }
+      const tb = document.getElementById('tbodyEmpresas');
+      tb.innerHTML = (data.data || []).map(e => `
+        <tr>
+          <td>${e.id}</td>
+          <td>${escapeHtml(e.nome)}</td>
+          <td><code>${escapeHtml(e.slug)}</code></td>
+          <td>${e.ativo ? 'sim' : 'não'}</td>
+          <td>
+            <button type="button" class="btn btn-sm btn-primary me-1" data-usar="${e.id}">Usar no painel</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-clone="${e.id}">Clonar config da empresa 1</button>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="5">Nenhuma empresa</td></tr>';
+
+      tb.querySelectorAll('[data-usar]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          PizzabotSession.setEmpresaParaPainel(btn.getAttribute('data-usar'));
+          window.location.href = '/dashboard.html';
+        });
+      });
+      tb.querySelectorAll('[data-clone]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const id = btn.getAttribute('data-clone');
+          if (id === '1') { msg('Já é a empresa base.', false); return; }
+          if (!confirm('Copiar configurações da empresa 1 para a empresa ' + id + '?')) return;
+          const res = await api('/empresas/' + id + '/clonar-de/1', { method: 'POST' });
+          if (res && res.success) msg('Configuração clonada: ' + JSON.stringify(res.data), true);
+          else msg(res && res.error || 'Erro ao clonar', false);
+        });
+      });
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    document.getElementById('btnSair').addEventListener('click', () => PizzabotSession.logout());
+
+    document.getElementById('formNova').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = Object.fromEntries(fd.entries());
+      const res = await api('/empresas', { method: 'POST', body: JSON.stringify(body) });
+      if (res && res.success) {
+        msg('Empresa criada. ID ' + res.data.empresa.id, true);
+        e.target.reset();
+        carregar();
+      } else {
+        msg(res && res.error || 'Erro', false);
+      }
+    });
+
+    const p = new URLSearchParams(location.search);
+    if (p.get('precisaEmpresa')) {
+      msg('Selecione uma empresa na tabela e clique em &quot;Usar no painel&quot; antes de abrir o dashboard.', false);
+    }
+
+    carregar();
+  </script>
+</body>
+</html>

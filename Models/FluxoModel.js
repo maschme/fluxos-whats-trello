@@ -7,6 +7,12 @@ const Fluxo = sequelize.define('Fluxo', {
     primaryKey: true,
     autoIncrement: true
   },
+  empresaId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    references: { model: 'empresas', key: 'id' }
+  },
   nome: {
     type: DataTypes.STRING(100),
     allowNull: false

@@ -1,78 +1,98 @@
 const { Op } = require('sequelize');
 const { Fluxo } = require('../Models/FluxoModel');
+const { getEmpresaId } = require('../context/tenantContext');
 
-// Cache de fluxos ativos (apenas conversação: atendimento, campanha, suporte – exclui automacao)
-let cacheFluxos = {};
-let cacheTimestamp = null;
 const CACHE_TTL = 60000;
+const cacheByEmpresa = new Map();
+
+function getBucket() {
+  const eid = getEmpresaId();
+  if (!cacheByEmpresa.has(eid)) {
+    cacheByEmpresa.set(eid, { cacheFluxos: {}, cacheTimestamp: null });
+  }
+  return cacheByEmpresa.get(eid);
+}
 
 async function carregarFluxos() {
+  const eid = getEmpresaId();
   const fluxos = await Fluxo.findAll({
-    where: { ativo: true, tipo: { [Op.ne]: 'automacao' } }
+    where: { ativo: true, tipo: { [Op.ne]: 'automacao' }, empresaId: eid }
   });
-  cacheFluxos = {};
-  fluxos.forEach(f => {
-    cacheFluxos[f.id] = f;
-    
-    // Indexa por gatilho para busca rápida
+  const bucket = getBucket();
+  bucket.cacheFluxos = {};
+  fluxos.forEach((f) => {
+    bucket.cacheFluxos[f.id] = f;
+
     if (f.gatilho) {
       if (f.gatilho.tipo === 'mensagem_exata') {
-        cacheFluxos[`msg:${f.gatilho.valor.toLowerCase()}`] = f;
+        bucket.cacheFluxos[`msg:${f.gatilho.valor.toLowerCase()}`] = f;
       } else if (f.gatilho.tipo === 'palavra_chave') {
-        f.gatilho.palavras?.forEach(p => {
-          cacheFluxos[`kw:${p.toLowerCase()}`] = f;
+        f.gatilho.palavras?.forEach((p) => {
+          bucket.cacheFluxos[`kw:${p.toLowerCase()}`] = f;
         });
       }
     }
   });
-  cacheTimestamp = Date.now();
-  console.log(`🔀 ${fluxos.length} fluxos carregados`);
-  return cacheFluxos;
+  bucket.cacheTimestamp = Date.now();
+  console.log(`🔀 ${fluxos.length} fluxos carregados (empresa ${eid})`);
+  return bucket.cacheFluxos;
 }
 
 async function buscarFluxoPorGatilho(mensagem) {
   const agora = Date.now();
-  if (!cacheTimestamp || (agora - cacheTimestamp) > CACHE_TTL) {
+  const bucket = getBucket();
+  if (!bucket.cacheTimestamp || (agora - bucket.cacheTimestamp) > CACHE_TTL) {
     await carregarFluxos();
   }
-  
+
   const msgLower = mensagem.toLowerCase().trim();
-  
-  // Busca por mensagem exata
-  if (cacheFluxos[`msg:${msgLower}`]) {
-    return cacheFluxos[`msg:${msgLower}`];
+
+  if (bucket.cacheFluxos[`msg:${msgLower}`]) {
+    return bucket.cacheFluxos[`msg:${msgLower}`];
   }
-  
-  // Busca por palavra-chave
-  for (const [key, fluxo] of Object.entries(cacheFluxos)) {
+
+  for (const [key, fluxo] of Object.entries(bucket.cacheFluxos)) {
     if (key.startsWith('kw:') && msgLower.includes(key.replace('kw:', ''))) {
       return fluxo;
     }
   }
-  
+
   return null;
 }
 
 async function listarFluxos(filtros = {}) {
-  const where = {};
+  const eid = getEmpresaId();
+  const where = { empresaId: eid };
   if (filtros.tipo) where.tipo = filtros.tipo;
   if (filtros.ativo !== undefined) where.ativo = filtros.ativo;
-  
-  return await Fluxo.findAll({
+
+  return Fluxo.findAll({
     where,
     order: [['updatedAt', 'DESC']]
   });
 }
 
+/** Usado pelo webhook público do Trello (sem contexto de tenant). */
+async function listarAutomacoesAtivasPorEmpresaId(empresaId) {
+  const eid = Number(empresaId);
+  if (Number.isNaN(eid)) return [];
+  return Fluxo.findAll({
+    where: { empresaId: eid, tipo: 'automacao', ativo: true },
+    order: [['id', 'ASC']]
+  });
+}
+
 async function getFluxoPorId(id) {
-  return await Fluxo.findByPk(id);
+  const eid = getEmpresaId();
+  return Fluxo.findOne({ where: { id, empresaId: eid } });
 }
 
 async function criarFluxo(dados) {
+  const eid = getEmpresaId();
   const fluxo = await Fluxo.create({
+    empresaId: eid,
     nome: dados.nome || 'Novo Fluxo',
     descricao: dados.descricao,
-    // Editor de fluxos conversacionais usa este fallback.
     tipo: dados.tipo || 'campanha',
     gatilho: dados.gatilho,
     nodes: dados.nodes || [],
@@ -81,39 +101,43 @@ async function criarFluxo(dados) {
     ativo: false,
     versao: 1
   });
-  
-  cacheTimestamp = null;
+
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return fluxo;
 }
 
 async function atualizarFluxo(id, dados) {
-  const fluxo = await Fluxo.findByPk(id);
+  const fluxo = await getFluxoPorId(id);
   if (!fluxo) throw new Error('Fluxo não encontrado');
-  
-  // Incrementa versão se nodes ou edges mudaram
+
   if (dados.nodes || dados.edges) {
     dados.versao = fluxo.versao + 1;
   }
-  
+
   await fluxo.update(dados);
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return fluxo;
 }
 
 async function deletarFluxo(id) {
-  const fluxo = await Fluxo.findByPk(id);
+  const fluxo = await getFluxoPorId(id);
   if (!fluxo) throw new Error('Fluxo não encontrado');
-  
+
   await fluxo.destroy();
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return true;
 }
 
 async function duplicarFluxo(id, novoNome) {
-  const original = await Fluxo.findByPk(id);
+  const original = await getFluxoPorId(id);
   if (!original) throw new Error('Fluxo não encontrado');
-  
-  const novo = await Fluxo.create({
+
+  const eid = getEmpresaId();
+  return Fluxo.create({
+    empresaId: eid,
     nome: novoNome || `${original.nome} (cópia)`,
     descricao: original.descricao,
     tipo: original.tipo,
@@ -124,31 +148,32 @@ async function duplicarFluxo(id, novoNome) {
     ativo: false,
     versao: 1
   });
-  
-  return novo;
 }
 
 async function ativarFluxo(id) {
-  const fluxo = await Fluxo.findByPk(id);
+  const fluxo = await getFluxoPorId(id);
   if (!fluxo) throw new Error('Fluxo não encontrado');
-  
+
   await fluxo.update({ ativo: true });
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return fluxo;
 }
 
 async function desativarFluxo(id) {
-  const fluxo = await Fluxo.findByPk(id);
+  const fluxo = await getFluxoPorId(id);
   if (!fluxo) throw new Error('Fluxo não encontrado');
-  
+
   await fluxo.update({ ativo: false });
-  cacheTimestamp = null;
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
   return fluxo;
 }
 
 function invalidarCache() {
-  cacheTimestamp = null;
-  cacheFluxos = {};
+  const bucket = getBucket();
+  bucket.cacheTimestamp = null;
+  bucket.cacheFluxos = {};
 }
 
 const EXPORT_SCHEMA_VERSION = 1;
@@ -212,6 +237,7 @@ module.exports = {
   carregarFluxos,
   buscarFluxoPorGatilho,
   listarFluxos,
+  listarAutomacoesAtivasPorEmpresaId,
   getFluxoPorId,
   criarFluxo,
   atualizarFluxo,
