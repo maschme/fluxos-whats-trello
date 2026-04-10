@@ -55,20 +55,56 @@
     .palette-node.trello_comment .icon,
     .palette-node.trello_add_label .icon { background: #026aa7; }
     .flow-node { position: absolute; width: 220px; background: var(--bg-card); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; cursor: default; z-index: 10; }
-    .flow-node.condition .handle.output-true { right: -7px; top: 35%; }
-    .flow-node.condition .handle.output-false { right: -7px; top: 65%; }
+    .flow-node.condition .handle.output-true { right: -8px; top: 35%; transform: none; }
+    .flow-node.condition .handle.output-false { right: -8px; top: 65%; transform: none; }
     .flow-node .node-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.08); border-radius: 10px 10px 0 0; }
     .flow-node .node-header .title { flex: 1; font-size: 0.85rem; font-weight: 600; }
     .flow-node .node-body { padding: 0.5rem 0.75rem; font-size: 0.8rem; color: rgba(255,255,255,0.8); }
-    .flow-node .handle { position: absolute; width: 14px; height: 14px; background: var(--bg-dark); border: 2px solid var(--primary-color); border-radius: 50%; cursor: crosshair; }
-    .flow-node .handle.input { left: -7px; top: 50%; transform: translateY(-50%); }
-    .flow-node .handle.output { right: -7px; top: 50%; transform: translateY(-50%); }
+    .flow-node .handle {
+      position: absolute; z-index: 3;
+      width: 16px; height: 16px;
+      background: #1a1a2e;
+      border: 2px solid var(--primary-color);
+      border-radius: 50%;
+      cursor: crosshair;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 0 10px rgba(99,102,241,0.65);
+    }
+    .flow-node .handle.input { left: -8px; top: 50%; transform: translateY(-50%); }
+    .flow-node .handle.output { right: -8px; top: 50%; transform: translateY(-50%); }
     .flow-node .preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
     .flow-node .delete-btn { background: none; border: none; color: rgba(255,255,255,0.5); cursor: pointer; padding: 0 0.25rem; }
     .flow-node.selected { border-color: var(--primary-color); box-shadow: 0 0 0 2px rgba(99,102,241,0.3); }
-    .canvas-container { position: fixed; top: 50px; left: 260px; right: 320px; bottom: 0; overflow: hidden; background: var(--bg-canvas); }
-    #canvas { position: absolute; transform-origin: 0 0; }
-    .connection-path { fill: none; stroke: rgba(99,102,241,0.6); stroke-width: 2; }
+    .canvas-container {
+      position: fixed; top: 50px; left: 260px; right: 320px; bottom: 0;
+      overflow: auto;
+      background: #0a0a12;
+      min-width: 280px;
+    }
+    /* Área de desenho grande: filhos absolute não expandiam o #canvas (colapso), recortando nós e handles */
+    #canvas {
+      position: relative;
+      transform-origin: 0 0;
+      min-width: 3200px;
+      min-height: 2200px;
+      padding: 48px;
+      box-sizing: border-box;
+      background-color: var(--bg-canvas);
+      background-image: radial-gradient(circle, rgba(148,163,184,0.35) 1.25px, transparent 1.25px);
+      background-size: 20px 20px;
+      background-position: 0 0;
+    }
+    #connectionsSvg {
+      position: absolute;
+      left: 0; top: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+      overflow: visible;
+    }
+    .connection-path { fill: none; stroke: rgba(129,140,248,0.85); stroke-width: 2.5; }
+    .canvas-container::-webkit-scrollbar { width: 10px; height: 10px; }
+    .canvas-container::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.4); border-radius: 6px; }
     .properties-panel { position: fixed; top: 50px; right: 0; width: 320px; height: calc(100vh - 50px); background: var(--bg-card); border-left: 1px solid rgba(255,255,255,0.1); padding: 1rem; overflow-y: auto; }
     .properties-panel .form-group { margin-bottom: 1rem; }
     .properties-panel label { display: block; font-size: 0.8rem; color: rgba(255,255,255,0.7); margin-bottom: 0.25rem; }
@@ -213,7 +249,35 @@
     };
 
     function generateNodeId() { return 'node_' + (nodeIdCounter++); }
-    function screenToCanvas(cx, cy) { const r = canvasContainer.getBoundingClientRect(); return { x: (cx - r.left - viewport.x) / viewport.zoom, y: (cy - r.top - viewport.y) / viewport.zoom }; }
+    /** Converte coordenadas da tela para o espaço do canvas (considera scroll do container e pan/zoom). */
+    function screenToCanvas(cx, cy) {
+      const r = canvasContainer.getBoundingClientRect();
+      const sl = canvasContainer.scrollLeft || 0;
+      const st = canvasContainer.scrollTop || 0;
+      return {
+        x: (cx - r.left + sl - viewport.x) / viewport.zoom,
+        y: (cy - r.top + st - viewport.y) / viewport.zoom
+      };
+    }
+    /** Expande o #canvas para caber todos os nós + margem (evita colapso com position:absolute). */
+    function updateCanvasBounds() {
+      const pad = 160;
+      const minW = 3200;
+      const minH = 2200;
+      let maxR = 400;
+      let maxB = 300;
+      nodes.forEach(function(n) {
+        const el = document.getElementById(n.id);
+        const w = el ? el.offsetWidth : 220;
+        const h = el ? el.offsetHeight : 100;
+        maxR = Math.max(maxR, n.x + w + pad);
+        maxB = Math.max(maxB, n.y + h + pad);
+      });
+      const cw = Math.max(minW, maxR);
+      const ch = Math.max(minH, maxB);
+      canvas.style.width = cw + 'px';
+      canvas.style.height = ch + 'px';
+    }
     function getHandlePosition(nodeId, handleType) {
       const el = document.getElementById(nodeId), node = nodes.find(n => n.id === nodeId);
       if (!el || !node) return null;
@@ -232,6 +296,7 @@
       nodes.push(node);
       renderNode(node);
       selectNode(node.id);
+      renderConnections();
       return node;
     }
 
@@ -266,14 +331,25 @@
       el.onmousedown = function(e) {
         if (e.target.closest('[data-action="delete"]')) { nodes = nodes.filter(n => n.id !== node.id); edges = edges.filter(e => e.source !== node.id && e.target !== node.id); el.remove(); renderConnections(); renderPropertiesPanel(); return; }
         const h = e.target.closest('.handle'); if (h && h.dataset.handle !== 'input') { isConnecting = true; connectionStart = { nodeId: node.id, handleType: h.dataset.handle }; tempConnectionLine = document.createElementNS('http://www.w3.org/2000/svg', 'path'); tempConnectionLine.classList.add('connection-path', 'temp'); svg.appendChild(tempConnectionLine); return; }
-        if (e.target.closest('.node-header')) { isDraggingNode = true; draggedNode = node; dragOffset = { x: e.clientX / viewport.zoom - node.x, y: e.clientY / viewport.zoom - node.y }; selectNode(node.id); }
+        if (e.target.closest('.node-header')) {
+          isDraggingNode = true;
+          draggedNode = node;
+          const r = canvasContainer.getBoundingClientRect();
+          const sl = canvasContainer.scrollLeft || 0;
+          const st = canvasContainer.scrollTop || 0;
+          dragOffset = {
+            x: (e.clientX - r.left + sl - viewport.x) / viewport.zoom - node.x,
+            y: (e.clientY - r.top + st - viewport.y) / viewport.zoom - node.y
+          };
+          selectNode(node.id);
+        }
       };
       el.onclick = function(e) { if (!e.target.closest('[data-action="delete"]') && !e.target.closest('.handle')) selectNode(node.id); };
     }
 
     function selectNode(id) { selectedNodeId = id; document.querySelectorAll('.flow-node').forEach(n => n.classList.remove('selected')); const el = document.getElementById(id); if (el) el.classList.add('selected'); renderPropertiesPanel(); }
 
-    function updateNodeData(key, val) { const n = nodes.find(x => x.id === selectedNodeId); if (n) { n.data[key] = val; renderNode(n); renderPropertiesPanel(); } }
+    function updateNodeData(key, val) { const n = nodes.find(x => x.id === selectedNodeId); if (n) { n.data[key] = val; renderNode(n); renderPropertiesPanel(); renderConnections(); } }
 
     function renderPropertiesPanel() {
       const panel = document.getElementById('propertiesPanel');
@@ -381,6 +457,7 @@
       return 'M '+x1+' '+y1+' C '+(mx)+' '+y1+' '+(mx)+' '+y2+' '+x2+' '+y2;
     }
     function renderConnections() {
+      updateCanvasBounds();
       svg.querySelectorAll('.connection-path').forEach(p => p.remove());
       edges.forEach(edge => {
         const sp = getHandlePosition(edge.source, edge.sourceHandle || 'output'), ep = getHandlePosition(edge.target, 'input');
@@ -393,7 +470,16 @@
       el.ondragstart = e => { e.dataTransfer.setData('nodeType', el.dataset.type); };
     });
     document.addEventListener('mousemove', e => {
-      if (isDraggingNode && draggedNode) { draggedNode.x = e.clientX / viewport.zoom - dragOffset.x; draggedNode.y = e.clientY / viewport.zoom - dragOffset.y; const el = document.getElementById(draggedNode.id); if (el) { el.style.left = draggedNode.x + 'px'; el.style.top = draggedNode.y + 'px'; } renderConnections(); }
+      if (isDraggingNode && draggedNode) {
+        const r = canvasContainer.getBoundingClientRect();
+        const sl = canvasContainer.scrollLeft || 0;
+        const st = canvasContainer.scrollTop || 0;
+        draggedNode.x = (e.clientX - r.left + sl - viewport.x) / viewport.zoom - dragOffset.x;
+        draggedNode.y = (e.clientY - r.top + st - viewport.y) / viewport.zoom - dragOffset.y;
+        const el = document.getElementById(draggedNode.id);
+        if (el) { el.style.left = draggedNode.x + 'px'; el.style.top = draggedNode.y + 'px'; }
+        renderConnections();
+      }
       if (isConnecting && connectionStart && tempConnectionLine) { const sp = getHandlePosition(connectionStart.nodeId, connectionStart.handleType), pos = screenToCanvas(e.clientX, e.clientY); if (sp) tempConnectionLine.setAttribute('d', createBezierPath(sp.x, sp.y, pos.x, pos.y)); }
     });
     document.addEventListener('mouseup', (e) => {
