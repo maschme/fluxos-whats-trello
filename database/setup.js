@@ -13,6 +13,11 @@ const { RequisicaoExterna } = require('../Models/RequisicaoExternaModel');
 const { Fluxo } = require('../Models/FluxoModel');
 require('../Models/IntegracaoTrelloModel');
 
+/** alter:true no MySQL pode falhar com "Too many keys (max 64)" em tabelas já migradas várias vezes. */
+function useSequelizeAlter() {
+  return String(process.env.DB_SYNC_ALTER || '').toLowerCase() === 'true';
+}
+
 async function setupDatabase() {
   console.log('🔧 Iniciando setup do banco de dados...\n');
 
@@ -23,14 +28,21 @@ async function setupDatabase() {
       throw new Error('Não foi possível conectar ao MySQL. Verifique se o serviço está rodando.');
     }
 
-    await Empresa.sync({ alter: true });
+    const syncAlter = useSequelizeAlter();
+    if (syncAlter) {
+      console.log('📋 Sequelize sync com alter: true (DB_SYNC_ALTER=true)');
+    } else {
+      console.log('📋 Sequelize sync sem alter (padrão). Novas tabelas são criadas; mudanças de coluna: DB_SYNC_ALTER=true ou SQL manual.');
+    }
+
+    await Empresa.sync({ alter: syncAlter });
     const [empresaPrincipal] = await Empresa.findOrCreate({
       where: { slug: 'principal' },
       defaults: { nome: 'Empresa principal', slug: 'principal', ativo: true }
     });
     const EID = empresaPrincipal.id;
 
-    await sequelize.sync({ alter: true });
+    await sequelize.sync({ alter: syncAlter });
     console.log('✅ Tabelas sincronizadas');
 
     setupAssociations();
