@@ -49,6 +49,7 @@
     .palette-node.sleep .icon { background: var(--node-sleep); }
     .palette-node.end .icon { background: var(--node-end); }
     .palette-node.trigger_trello .icon { background: #0079bf; }
+    .palette-node.trello .icon { background: #026aa7; }
     .palette-node.trello_create_card .icon,
     .palette-node.trello_move_card .icon,
     .palette-node.trello_comment .icon,
@@ -138,21 +139,9 @@
         <div class="icon"><i class="bi bi-cpu-fill"></i></div>
         <div class="info"><div class="name">IA / LLM</div><div class="desc">Processar com IA</div></div>
       </div>
-      <div class="palette-node trello_create_card" draggable="true" data-type="trello_create_card">
-        <div class="icon"><i class="bi bi-plus-square"></i></div>
-        <div class="info"><div class="name">Trello: criar card</div><div class="desc">Novo card em lista</div></div>
-      </div>
-      <div class="palette-node trello_move_card" draggable="true" data-type="trello_move_card">
-        <div class="icon"><i class="bi bi-arrows-move"></i></div>
-        <div class="info"><div class="name">Trello: mover card</div><div class="desc">Mudar lista</div></div>
-      </div>
-      <div class="palette-node trello_comment" draggable="true" data-type="trello_comment">
-        <div class="icon"><i class="bi bi-chat-left-text"></i></div>
-        <div class="info"><div class="name">Trello: comentário</div><div class="desc">Comentar no card</div></div>
-      </div>
-      <div class="palette-node trello_add_label" draggable="true" data-type="trello_add_label">
-        <div class="icon"><i class="bi bi-tag-fill"></i></div>
-        <div class="info"><div class="name">Trello: label</div><div class="desc">Adicionar etiqueta</div></div>
+      <div class="palette-node trello" draggable="true" data-type="trello">
+        <div class="icon"><i class="bi bi-kanban"></i></div>
+        <div class="info"><div class="name">Trello</div><div class="desc">Ação no quadro (menu)</div></div>
       </div>
     </div>
     <h6>Utilitários</h6>
@@ -179,7 +168,7 @@
     <div class="mt-2 p-2 rounded small" style="background: rgba(0,121,191,0.12); border: 1px solid rgba(0,121,191,0.35);">
       <strong>Trello:</strong> configure credenciais e webhook em
       <a href="integracoes-trello.html" class="link-info">Integrações Trello</a>.
-      Use o nó <em>Gatilho Trello</em> nesta automação. Variáveis úteis: <code>{{trelloCardId}}</code>, <code>{{trelloActionType}}</code>.
+      Gatilho Trello preenche <code>{{trelloCardName}}</code>, <code>{{trelloCardDesc}}</code>, listas, etc. Opcional: buscar card na API no próprio gatilho.
     </div>
   </div>
 
@@ -207,7 +196,7 @@
     const nodeTemplates = {
       trigger_webhook: { icon: 'bi-link-45deg', title: 'Webhook', hasInput: false, hasOutput: true, defaultData: { variavelPayload: 'payload' } },
       trigger_schedule: { icon: 'bi-clock', title: 'Agendamento', hasInput: false, hasOutput: true, defaultData: {} },
-      trigger_trello: { icon: 'bi-kanban', title: 'Gatilho Trello', hasInput: false, hasOutput: true, defaultData: { variavelPayload: 'trello', boardId: '', filtroTipoAcao: '*', listIdDestino: '' } },
+      trigger_trello: { icon: 'bi-kanban', title: 'Gatilho Trello', hasInput: false, hasOutput: true, defaultData: { variavelPayload: 'trello', boardId: '', filtroTipoAcao: '*', listIdDestino: '', buscarCardCompleto: false, onErrorApi: 'continue' } },
       condition: { icon: 'bi-diagram-3', title: 'Condição', hasInput: true, hasOutput: false, hasOutputTrue: true, hasOutputFalse: true, defaultData: { variavelNome: 'valor', operador: 'igual', valorComparacao: '' } },
       set_variable: { icon: 'bi-tag', title: 'Definir variável', hasInput: true, hasOutput: true, defaultData: { nomeVariavel: 'var', valor: '' } },
       http_request: { icon: 'bi-globe', title: 'HTTP', hasInput: true, hasOutput: true, defaultData: { method: 'GET', url: '', variavelSaida: 'response', timeout: 30 } },
@@ -216,6 +205,7 @@
       log: { icon: 'bi-journal-text', title: 'Log', hasInput: true, hasOutput: true, defaultData: { mensagem: 'Log', nivel: 'info' } },
       sleep: { icon: 'bi-hourglass-split', title: 'Atraso', hasInput: true, hasOutput: true, defaultData: { segundos: 5 } },
       end: { icon: 'bi-stop-circle-fill', title: 'Fim', hasInput: true, hasOutput: false, defaultData: {} },
+      trello: { icon: 'bi-kanban', title: 'Trello', hasInput: true, hasOutput: true, defaultData: { acao: 'move_card', cardId: '{{trelloCardId}}', listId: '', nome: '', descricao: '', texto: '', labelId: '', variavelSaida: '', onError: 'continue' } },
       trello_create_card: { icon: 'bi-plus-square', title: 'Trello · Criar card', hasInput: true, hasOutput: true, defaultData: { listId: '', nome: '', descricao: '', variavelSaida: 'trelloCard', onError: 'continue' } },
       trello_move_card: { icon: 'bi-arrows-move', title: 'Trello · Mover', hasInput: true, hasOutput: true, defaultData: { cardId: '{{trelloCardId}}', listId: '', variavelSaida: 'trelloMove', onError: 'continue' } },
       trello_comment: { icon: 'bi-chat-left-text', title: 'Trello · Comentário', hasInput: true, hasOutput: true, defaultData: { cardId: '{{trelloCardId}}', texto: '', variavelSaida: 'trelloComment', onError: 'continue' } },
@@ -255,6 +245,7 @@
       if (node.type === 'trigger_webhook') preview = 'POST → {{' + (node.data.variavelPayload || 'payload') + '}}';
       else if (node.type === 'trigger_schedule') preview = 'Agendamento / manual';
       else if (node.type === 'trigger_trello') preview = (node.data.filtroTipoAcao || '*') + (node.data.listIdDestino ? ' → lista…' : '');
+      else if (node.type === 'trello') preview = (node.data.acao || 'acao') + ': ' + (node.data.cardId || '').substring(0, 18);
       else if (node.type === 'trello_create_card') preview = (node.data.nome || 'card').substring(0, 28);
       else if (node.type === 'trello_move_card') preview = '→ lista ' + (node.data.listId || '').substring(0, 20);
       else if (node.type === 'trello_comment') preview = (node.data.texto || '').substring(0, 35);
@@ -282,7 +273,7 @@
 
     function selectNode(id) { selectedNodeId = id; document.querySelectorAll('.flow-node').forEach(n => n.classList.remove('selected')); const el = document.getElementById(id); if (el) el.classList.add('selected'); renderPropertiesPanel(); }
 
-    function updateNodeData(key, val) { const n = nodes.find(x => x.id === selectedNodeId); if (n) { n.data[key] = val; renderNode(n); } }
+    function updateNodeData(key, val) { const n = nodes.find(x => x.id === selectedNodeId); if (n) { n.data[key] = val; renderNode(n); renderPropertiesPanel(); } }
 
     function renderPropertiesPanel() {
       const panel = document.getElementById('propertiesPanel');
@@ -300,7 +291,9 @@
           html += '<div class="form-group"><label>ID do quadro (vazio = qualquer)</label><input type="text" value="' + (d.boardId || '') + '" onchange="updateNodeData(\'boardId\', this.value)" placeholder="Opcional"></div>';
           html += '<div class="form-group"><label>Tipo de ação Trello</label><input type="text" value="' + (d.filtroTipoAcao || '*') + '" onchange="updateNodeData(\'filtroTipoAcao\', this.value)" placeholder="* ou updateCard, createCard…"></div>';
           html += '<div class="form-group"><label>ID lista destino (só movimentação/criação)</label><input type="text" value="' + (d.listIdDestino || '') + '" onchange="updateNodeData(\'listIdDestino\', this.value)" placeholder="Vazio = qualquer lista"></div>';
-          html += '<p class="small text-secondary">Registre o webhook em Integrações Trello. <code>updateCard</code> com lista preenchida = card movido para essa lista.</p>';
+          html += '<div class="form-group"><label><input type="checkbox" ' + (d.buscarCardCompleto ? 'checked' : '') + ' onchange="updateNodeData(\'buscarCardCompleto\', this.checked)"> Buscar card completo na API ao disparar (objeto em <code>trelloCardApi</code> + variáveis nome/desc/lista)</label></div>';
+          html += '<div class="form-group"><label>Se a API do card falhar</label><select onchange="updateNodeData(\'onErrorApi\', this.value)"><option value="continue"' + (d.onErrorApi !== 'stop' ? ' selected' : '') + '>Continuar</option><option value="stop"' + (d.onErrorApi === 'stop' ? ' selected' : '') + '>Parar automação</option></select></div>';
+          html += '<p class="small text-secondary">Variáveis do webhook: <code>trelloCardName</code>, <code>trelloCardDesc</code>, <code>trelloListNameAfter</code>, <code>trelloBoardName</code>, <code>trelloLabelsNames</code>, …</p>';
           break;
         case 'condition':
           html += '<div class="form-group"><label>Variável</label><input type="text" value="' + (d.variavelNome || 'valor') + '" onchange="updateNodeData(\'variavelNome\', this.value)"></div><div class="form-group"><label>Operador</label><select onchange="updateNodeData(\'operador\', this.value)"><option value="igual"' + (d.operador==='igual'?' selected':'') + '>Igual</option><option value="diferente"' + (d.operador==='diferente'?' selected':'') + '>Diferente</option><option value="contem"' + (d.operador==='contem'?' selected':'') + '>Contém</option><option value="maior"' + (d.operador==='maior'?' selected':'') + '>Maior</option><option value="menor"' + (d.operador==='menor'?' selected':'') + '>Menor</option></select></div><div class="form-group"><label>Valor</label><input type="text" value="' + (d.valorComparacao || '') + '" onchange="updateNodeData(\'valorComparacao\', this.value)"></div>';
@@ -320,6 +313,40 @@
         case 'sleep':
           html += '<div class="form-group"><label>Atraso (segundos)</label><input type="number" value="' + (d.segundos || 5) + '" onchange="updateNodeData(\'segundos\', parseInt(this.value))" min="0" max="600"></div>';
           break;
+        case 'trello': {
+          var ac = d.acao || 'move_card';
+          html += '<div class="form-group"><label>Ação</label><select onchange="updateNodeData(\'acao\', this.value)">';
+          var trelloAcoes = [
+            ['obter_card', 'Obter card (API)'],
+            ['create_card', 'Criar card'],
+            ['move_card', 'Mover card'],
+            ['comment', 'Comentar'],
+            ['add_label', 'Adicionar label']
+          ];
+          for (var ti = 0; ti < trelloAcoes.length; ti++) {
+            html += '<option value="' + trelloAcoes[ti][0] + '"' + (ac === trelloAcoes[ti][0] ? ' selected' : '') + '>' + trelloAcoes[ti][1] + '</option>';
+          }
+          html += '</select></div>';
+          if (ac !== 'create_card') {
+            html += '<div class="form-group"><label>ID do card</label><input type="text" value="' + (d.cardId || '') + '" onchange="updateNodeData(\'cardId\', this.value)" placeholder="{{trelloCardId}}"></div>';
+          }
+          if (ac === 'create_card' || ac === 'move_card') {
+            html += '<div class="form-group"><label>ID da lista</label><input type="text" value="' + (d.listId || '') + '" onchange="updateNodeData(\'listId\', this.value)"></div>';
+          }
+          if (ac === 'create_card') {
+            html += '<div class="form-group"><label>Nome do card</label><input type="text" value="' + (d.nome || d.name || '') + '" onchange="updateNodeData(\'nome\', this.value)"></div>';
+            html += '<div class="form-group"><label>Descrição</label><textarea onchange="updateNodeData(\'descricao\', this.value)" rows="2">' + (d.descricao || d.desc || '') + '</textarea></div>';
+          }
+          if (ac === 'comment') {
+            html += '<div class="form-group"><label>Texto do comentário</label><textarea onchange="updateNodeData(\'texto\', this.value)" rows="2">' + (d.texto || d.text || '') + '</textarea></div>';
+          }
+          if (ac === 'add_label') {
+            html += '<div class="form-group"><label>ID da label</label><input type="text" value="' + (d.labelId || '') + '" onchange="updateNodeData(\'labelId\', this.value)"></div>';
+          }
+          html += '<div class="form-group"><label>Variável de saída (vazio = padrão por ação)</label><input type="text" value="' + (d.variavelSaida || '') + '" onchange="updateNodeData(\'variavelSaida\', this.value)" placeholder="trelloCardApi, trelloMove, …"></div>';
+          html += '<div class="form-group"><label>Se erro</label><select onchange="updateNodeData(\'onError\', this.value)"><option value="continue"' + (d.onError !== 'stop' ? ' selected' : '') + '>Continuar</option><option value="stop"' + (d.onError === 'stop' ? ' selected' : '') + '>Parar</option></select></div>';
+          break;
+        }
         case 'trello_create_card':
           html += '<div class="form-group"><label>ID da lista</label><input type="text" value="' + (d.listId || '') + '" onchange="updateNodeData(\'listId\', this.value)" placeholder="{{variavel}} ou ID fixo"></div>';
           html += '<div class="form-group"><label>Nome do card</label><input type="text" value="' + (d.nome || d.name || '') + '" onchange="updateNodeData(\'nome\', this.value)"></div>';

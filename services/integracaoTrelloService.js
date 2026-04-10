@@ -292,6 +292,18 @@ async function adicionarLabel(empresaId, { cardId, labelId }) {
   return trelloPost(empresaId, `/cards/${cid}/idLabels`, { value: lid });
 }
 
+/** Card completo via API (labels e membros expandidos quando possível). */
+async function obterCard(empresaId, cardId) {
+  const cid = interpolateSafe(cardId);
+  if (!cid) throw new Error('obter_card: cardId é obrigatório');
+  return trelloGet(empresaId, `/cards/${encodeURIComponent(cid)}`, {
+    members: 'true',
+    member_fields: 'username,fullName,initials',
+    labels: 'true',
+    label_fields: 'name,color,id'
+  });
+}
+
 module.exports = {
   getOrCreateRow,
   getConfigResumo,
@@ -312,5 +324,6 @@ module.exports = {
   moverCard,
   comentarCard,
   adicionarLabel,
+  obterCard,
   trelloGet
 };
